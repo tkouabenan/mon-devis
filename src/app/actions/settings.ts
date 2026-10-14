@@ -83,7 +83,10 @@ export async function updateProfileAction(_previous: ActionResult | undefined, f
   return { success: true, message: 'Profil mis à jour.' };
 }
 
-export async function uploadAvatarAction(_previous: ActionResult | undefined, formData: FormData): Promise<ActionResult<{ url: string }>> {
+export async function uploadAvatarAction(
+  _previous: ActionResult<{ url: string }> | undefined,
+  formData: FormData,
+): Promise<ActionResult<{ url: string }>> {
   const session = await requireSession();
   const file = formData.get('avatar');
   const organizationId = session.activeOrganization?.id ?? '';
@@ -194,7 +197,7 @@ export async function saveCompanyProfileAction(
 }
 
 export async function uploadCompanyLogoAction(
-  _previous: ActionResult | undefined,
+  _previous: ActionResult<{ url: string }> | undefined,
   formData: FormData,
 ): Promise<ActionResult<{ url: string }>> {
   const context = await requireOrganization();
@@ -366,15 +369,18 @@ export async function updateNotificationPreferencesAction(
   const session = await requireSession();
   const pick = (name: string) => formData.get(name) === 'on';
 
+  const reminderDays = Number(formData.get('reminderDaysBefore') ?? 3);
   const values = {
     quotationViewed: pick('quotationViewed'),
     quotationAccepted: pick('quotationAccepted'),
     quotationRejected: pick('quotationRejected'),
     quotationExpiring: pick('quotationExpiring'),
-    invoiceCreated: pick('invoiceCreated'),
-    paymentReceived: pick('paymentReceived'),
-    weeklySummary: pick('weeklySummary'),
-    productUpdates: pick('productUpdates'),
+    quotationExpired: pick('quotationExpired'),
+    exportReady: pick('exportReady'),
+    subscriptionUpdates: pick('subscriptionUpdates'),
+    accountEvents: pick('accountEvents'),
+    emailEnabled: pick('emailEnabled'),
+    reminderDaysBefore: Number.isFinite(reminderDays) ? Math.min(Math.max(Math.round(reminderDays), 1), 30) : 3,
     updatedAt: new Date(),
   };
 
@@ -509,7 +515,10 @@ export async function listMyOrganizationsAction() {
   return listOrganizationsForUser(session.user.id);
 }
 
-export async function addOrganizationAction(_previous: ActionResult | undefined, formData: FormData): Promise<ActionResult<{ id: string }>> {
+export async function addOrganizationAction(
+  _previous: ActionResult<{ id: string }> | undefined,
+  formData: FormData,
+): Promise<ActionResult<{ id: string }>> {
   const session = await requireSession();
   const parsed = organizationSchema.safeParse({ name: formData.get('name') });
   if (!parsed.success) {

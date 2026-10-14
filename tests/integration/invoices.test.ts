@@ -57,6 +57,43 @@ describe('numérotation des factures', () => {
   });
 });
 
+describe('instantané émetteur (mentions de l’entreprise)', () => {
+  it('fige les mentions de l’entreprise dès la création d’une facture', async () => {
+    const invoice = await createInvoice({
+      organizationId: organization.id,
+      userId: user.id,
+      input: { title: 'Facture directe', currency: 'XOF', items: sampleItems() },
+    });
+
+    const snapshot = invoice.companySnapshot as unknown as { name?: string; taxId?: string | null } | null;
+    // Sans cet instantané, la facture serait générée sans bloc émetteur.
+    expect(snapshot).not.toBeNull();
+    expect(snapshot?.name).toBe(`Société ${organization.name}`);
+    expect(snapshot?.taxId).toBe('CI-TEST-0001');
+  });
+
+  it('reprend les mentions du devis lors de la conversion', async () => {
+    const quotation = await createQuotation({
+      organizationId: organization.id,
+      userId: user.id,
+      input: { title: 'Mission', currency: 'XOF', items: sampleItems() },
+    });
+    await changeQuotationStatus({
+      organizationId: organization.id,
+      quotationId: quotation.id,
+      userId: user.id,
+      status: 'ACCEPTED',
+    });
+
+    const invoice = await createInvoiceFromQuotation({ organizationId: organization.id, userId: user.id, quotationId: quotation.id });
+    const snapshot = invoice.companySnapshot as unknown as { name?: string } | null;
+
+    expect(snapshot?.name).toBe(`Société ${organization.name}`);
+    const document = await generateInvoiceDocument({ organizationId: organization.id, invoiceId: invoice.id, format: 'pdf' });
+    expect(document.buffer.byteLength).toBeGreaterThan(1000);
+  });
+});
+
 describe('conversion d’un devis accepté', () => {
   it('copie les lignes et les totaux du devis', async () => {
     const quotation = await acceptedQuotation();

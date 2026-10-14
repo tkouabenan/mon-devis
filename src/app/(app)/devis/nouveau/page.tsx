@@ -4,6 +4,7 @@ import { buildCompanySnapshot, getOrganizationSettings, nextQuotationNumber } fr
 import { listCustomers } from '@/lib/services/customers';
 import { listProducts } from '@/lib/services/products';
 import { getOrganizationSubscription } from '@/lib/services/subscription';
+import { QUOTATION_TEMPLATES } from '@/lib/templates';
 import { QuotationBuilder, type BuilderCustomer } from '@/components/quotes/quotation-builder';
 import type { EditorProduct } from '@/components/documents/items-editor';
 
@@ -13,7 +14,11 @@ export const metadata: Metadata = {
     'Créez un devis professionnel : calculs automatiques, aperçu temps réel, 8 modèles et exports PDF, Word et Excel.',
 };
 
-export default async function NewQuotationPage({ searchParams }: { searchParams: Promise<{ client?: string }> }) {
+export default async function NewQuotationPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ client?: string; modele?: string }>;
+}) {
   const context = await requireOrganization();
   const params = await searchParams;
   const organizationId = context.organization.id;
@@ -52,6 +57,10 @@ export default async function NewQuotationPage({ searchParams }: { searchParams:
   const preselectedCustomer =
     params.client && builderCustomers.some((entry) => entry.id === params.client) ? params.client : null;
 
+  // Modèle choisi depuis la galerie « Modèles de devis » (pré-sélection, modifiable dans l'éditeur).
+  const requestedTemplate = QUOTATION_TEMPLATES.find((template) => template.key === params.modele);
+  const templateAllowed = requestedTemplate ? !requestedTemplate.premium || !subscription.isFree : false;
+
   return (
     <QuotationBuilder
       mode="create"
@@ -81,7 +90,7 @@ export default async function NewQuotationPage({ searchParams }: { searchParams:
         defaultCurrency: settings.defaultCurrency,
         defaultTaxRate: Number(settings.defaultTaxRate),
         defaultValidityDays: settings.defaultValidityDays,
-        defaultTemplateKey: settings.defaultTemplateKey,
+        defaultTemplateKey: templateAllowed && requestedTemplate ? requestedTemplate.key : settings.defaultTemplateKey,
         defaultPaymentTerms: settings.defaultPaymentTerms,
         defaultTerms: settings.defaultTerms,
         defaultNotes: settings.defaultNotes,

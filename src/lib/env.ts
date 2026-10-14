@@ -25,7 +25,18 @@ export const env = {
   isProduction,
   isDevelopment: !isProduction,
 
-  databaseUrl: optional('DATABASE_URL'),
+  databaseUrl: (() => {
+    const url = optional('DATABASE_URL');
+    if (!url && isProduction) {
+      // En production, une base manquante doit échouer immédiatement et clairement
+      // plutôt que de laisser l'application tenter une connexion locale inexistante.
+      throw new Error(
+        "DATABASE_URL est obligatoire en production. Renseignez la chaîne de connexion de votre PostgreSQL managé " +
+          '(Neon, Supabase, Vercel Postgres, Railway…), puis relancez le déploiement.',
+      );
+    }
+    return url;
+  })(),
 
   authSecret: (() => {
     const secret = optional('AUTH_SECRET');

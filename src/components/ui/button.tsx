@@ -72,8 +72,6 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
 );
 Button.displayName = 'Button';
 
-Button.displayName = 'Button';
-
 /** Groupe de boutons contigus (barres d'actions documentaires). */
 export function ButtonGroup({ className, children }: { className?: string; children: React.ReactNode }) {
   return (

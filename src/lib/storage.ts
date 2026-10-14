@@ -44,14 +44,36 @@ function localRoot(): string {
   return resolve(process.cwd(), env.storage.localDir);
 }
 
+/** Erreur levée lorsque le disque du serveur est en lecture seule (hébergement serverless). */
+export class ReadOnlyStorageError extends Error {
+  constructor() {
+    super(
+      "Le stockage local est indisponible : le système de fichiers est en lecture seule sur cet hébergement. " +
+        'Configurez un stockage objet (STORAGE_DRIVER=s3 avec S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY) ' +
+        'et redéployez : les logos et les fichiers envoyés y seront conservés.',
+    );
+    this.name = 'ReadOnlyStorageError';
+  }
+}
+
+function isReadOnlyError(error: unknown): boolean {
+  const code = (error as { code?: string } | null)?.code ?? '';
+  return code === 'EROFS' || code === 'EACCES' || code === 'EPERM' || code === 'ENOTSUP';
+}
+
 async function saveLocal(key: string, buffer: Buffer, mimeType: string): Promise<StoredFile> {
   const target = join(localRoot(), key);
   const resolvedTarget = resolve(target);
   if (!resolvedTarget.startsWith(localRoot() + sep)) {
     throw new Error('Chemin de stockage invalide.');
   }
-  await mkdir(dirname(resolvedTarget), { recursive: true });
-  await writeFile(resolvedTarget, buffer);
+  try {
+    await mkdir(dirname(resolvedTarget), { recursive: true });
+    await writeFile(resolvedTarget, buffer);
+  } catch (error) {
+    if (isReadOnlyError(error)) throw new ReadOnlyStorageError();
+    throw error;
+  }
   return {
     key,
     url: `/api/files/${key}`,

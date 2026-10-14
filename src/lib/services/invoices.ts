@@ -19,6 +19,7 @@ import { calculateQuotation, type QuotationTotals } from '@/lib/quotation-calcul
 import { renderQuotationNumber } from '@/lib/numbering';
 import { toAmountNumber, toMoneyString, toNumberString } from '@/lib/money';
 import { AuthorizationError, NotFoundError } from '@/lib/auth/guards';
+import { buildCompanySnapshot } from '@/lib/services/quotations';
 import { ALLOWED_INVOICE_TRANSITIONS } from '@/lib/constants';
 import type { CompanySnapshot, CustomerSnapshot, QuotationTerms } from '@/lib/quotation-document';
 
@@ -56,6 +57,12 @@ export interface InvoiceInput {
   title?: string;
   customerId?: string | null;
   customerSnapshot?: CustomerSnapshot | null;
+  /**
+   * Instantané de l'entreprise émettrice au moment de l'émission.
+   * S'il n'est pas fourni, il est construit depuis la fiche entreprise courante :
+   * une facture ne doit jamais être générée sans le bloc émetteur.
+   */
+  companySnapshot?: CompanySnapshot | null;
   reference?: string | null;
   customerReference?: string | null;
   currency?: string;
@@ -441,8 +448,12 @@ export async function createInvoice({
     })),
   );
 
+  // Instantané de l'entreprise : copie figée des mentions légales et coordonnées
+  // de paiement, pour que la facture reste conforme même si la fiche change ensuite.
+  const companySnapshot = input.companySnapshot ?? (await buildCompanySnapshot(organizationId));
+
   const document = await db.transaction(async (tx) => {
-    const number = input.sourceQuotationNumber ? await nextInvoiceNumber(organizationId, issueDate) : await nextInvoiceNumber(organizationId, issueDate);
+    const number = await nextInvoiceNumber(organizationId, issueDate);
 
     const [created] = await tx
       .insert(invoices)
@@ -473,6 +484,7 @@ export async function createInvoice({
         taxTotal: toMoneyString(totals.taxTotal),
         total: toMoneyString(totals.total),
         customerSnapshot: (input.customerSnapshot ?? null) as unknown as Record<string, unknown> | null,
+        companySnapshot: (companySnapshot ?? null) as unknown as Record<string, unknown> | null,
         terms: (input.terms ?? null) as unknown as Record<string, unknown> | null,
         notes: input.notes ?? null,
       })
@@ -539,6 +551,7 @@ export async function createInvoiceFromQuotation({
       title: options.title ?? quotation.title,
       customerId: quotation.customerId,
       customerSnapshot: quotation.customerSnapshot as unknown as CustomerSnapshot | null,
+      companySnapshot: quotation.companySnapshot as unknown as CompanySnapshot | null,
       reference: quotation.reference,
       customerReference: quotation.customerReference,
       currency: quotation.currency,
