@@ -148,6 +148,8 @@ export const organizations = pgTable(
     ownerId: text('owner_id')
       .notNull()
       .references(() => users.id, { onDelete: 'restrict' }),
+    /** Date de la demande de suppression du compte (traitée par l'administration). */
+    deletionRequestedAt: timestamp('deletion_requested_at', { withTimezone: true, mode: 'date' }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -226,6 +228,11 @@ export const organizationSettings = pgTable(
     brandColor: text('brand_color').notNull().default('#2563EB'),
     brandColorSecondary: text('brand_color_secondary').notNull().default('#0F172A'),
     logoPosition: text('logo_position').notNull().default('LEFT'),
+    /**
+     * Personnalisation du modèle de document (couleurs, police, mise en page,
+     * éléments visibles). Appliquée à l'aperçu et à tous les exports.
+     */
+    templateCustomization: jsonb('template_customization'),
     emailReminders: boolean('email_reminders').notNull().default(true),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
