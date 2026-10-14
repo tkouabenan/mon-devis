@@ -11,6 +11,7 @@ import {
   type Quotation,
   type QuotationItem,
   type QuotationStatus,
+  users,
 } from '@/db/schema';
 import { newId } from '@/lib/id';
 import { calculateQuotation, type QuotationTotals } from '@/lib/quotation-calculator';
@@ -759,6 +760,19 @@ export async function listQuotations(organizationId: string, filters: ListQuotat
 }
 
 /** Autres devis du même client (contexte dans la vue détail). */
+/** Historique des changements de statut d'un devis (du plus récent au plus ancien). */
+export async function listQuotationStatusHistory(organizationId: string, quotationId: string, limit = 50) {
+  const rows = await db
+    .select({ entry: quotationStatusHistory, actorName: users.name })
+    .from(quotationStatusHistory)
+    .innerJoin(quotations, eq(quotationStatusHistory.quotationId, quotations.id))
+    .leftJoin(users, eq(quotationStatusHistory.actorUserId, users.id))
+    .where(and(eq(quotations.organizationId, organizationId), eq(quotationStatusHistory.quotationId, quotationId)))
+    .orderBy(desc(quotationStatusHistory.createdAt))
+    .limit(limit);
+  return rows.map((row) => ({ ...row.entry, actorName: row.actorName }));
+}
+
 export async function listSiblingQuotations(organizationId: string, quotationId: string, customerId: string | null, limit = 5) {
   if (!customerId) return [];
   return db

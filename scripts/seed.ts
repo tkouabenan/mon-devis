@@ -12,7 +12,7 @@
 import 'dotenv/config';
 import { createHash } from 'node:crypto';
 import { sql } from 'drizzle-orm';
-import { db, pool } from '@/db';
+import { db, getPool } from '@/db';
 import {
   applicationSettings,
   auditLogs,
@@ -902,12 +902,12 @@ async function main(): Promise<void> {
   console.log('[seed] connectez-vous sur http://localhost:3000/connexion avec demo@mon-devis.app / Demo2026!');
   console.log('[seed] les tarifs des plans sont volontairement à 0 : définissez-les dans Administration → Tarifs.\n');
 
-  await pool.end();
+  await getPool().end();
 }
 
 main().catch(async (error) => {
   console.error('[seed] échec :', error);
-  await pool.end().catch(() => undefined);
+  await getPool().end().catch(() => undefined);
   process.exit(1);
 });
 

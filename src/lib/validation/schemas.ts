@@ -8,12 +8,18 @@ import { validateNumberingFormat } from '@/lib/numbering';
  * s'appliquent dans les formulaires et dans les actions serveur.
  */
 
+/**
+ * Adresse e-mail : espaces retirés et minuscules forcées.
+ * La normalisation évite les doublons de compte du type Awa@… / awa@… alors que
+ * l'unicité est vérifiée en base sur la colonne `email`.
+ */
 const emailSchema = z
   .string()
   .trim()
   .min(1, "L'adresse e-mail est obligatoire.")
   .email('Adresse e-mail invalide.')
-  .max(200, 'Adresse e-mail trop longue.');
+  .max(200, 'Adresse e-mail trop longue.')
+  .transform((value) => value.toLowerCase());
 
 const passwordSchema = z
   .string()
@@ -217,6 +223,42 @@ export const quotationSchema = z.object({
     })
     .nullish(),
 });
+
+/* -------------------------------------------------------------------------- */
+/* Factures                                                                   */
+/* -------------------------------------------------------------------------- */
+
+export const invoiceItemSchema = quotationItemSchema;
+
+export const invoicePaymentSchema = z.object({
+  invoiceId: z.string().trim().min(1, 'Facture introuvable.'),
+  amount: z.coerce.number().gt(0, 'Le montant doit être supérieur à zéro.').max(1_000_000_000),
+  method: z.enum(['BANK_TRANSFER', 'MOBILE_MONEY', 'CASH', 'CARD', 'CHEQUE', 'OTHER']).default('BANK_TRANSFER'),
+  paidAt: optionalString(40),
+  reference: optionalString(80),
+  note: optionalString(400),
+});
+
+export const invoiceSchema = z.object({
+  title: z.string().trim().min(1, "L'intitulé de la facture est obligatoire.").max(200),
+  customerId: z.string().optional().nullable(),
+  reference: optionalString(80),
+  customerReference: optionalString(80),
+  status: z.enum(['DRAFT', 'SENT', 'PARTIALLY_PAID', 'PAID', 'OVERDUE', 'CANCELLED']).default('DRAFT'),
+  currency: z.string().trim().length(3, 'Devise invalide.').toUpperCase(),
+  issueDate: z.coerce.date(),
+  dueDate: z.coerce.date().nullish(),
+  templateKey: z.string().trim().min(1).max(40),
+  pricesIncludeTax: z.boolean().default(false),
+  globalDiscountType: z.enum(['PERCENTAGE', 'FIXED']).nullish(),
+  globalDiscountValue: z.coerce.number().min(0).max(1_000_000_000).optional().default(0),
+  notes: optionalString(2000),
+  terms: termsSchema,
+  items: z.array(invoiceItemSchema).min(1, 'Ajoutez au moins une ligne à la facture.').max(200, 'Une facture ne peut pas dépasser 200 lignes.'),
+});
+
+export type InvoiceInputSchema = z.infer<typeof invoiceSchema>;
+export type InvoicePaymentInput = z.infer<typeof invoicePaymentSchema>;
 
 /* -------------------------------------------------------------------------- */
 /* Réglages                                                                   */

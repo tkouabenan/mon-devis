@@ -81,6 +81,10 @@ export const notificationTypeEnum = pgEnum('notification_type', [
   'QUOTATION_REJECTED',
   'QUOTATION_EXPIRING',
   'QUOTATION_EXPIRED',
+  'INVOICE_CREATED',
+  'INVOICE_PAID',
+  'INVOICE_OVERDUE',
+  'PAYMENT_RECEIVED',
   'EXPORT_READY',
   'SUBSCRIPTION_UPDATE',
   'ACCOUNT_EVENT',
@@ -92,6 +96,22 @@ export const emailStatusEnum = pgEnum('email_status', ['QUEUED', 'SENT', 'FAILED
 export const ticketStatusEnum = pgEnum('ticket_status', ['OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED']);
 export const ticketPriorityEnum = pgEnum('ticket_priority', ['LOW', 'NORMAL', 'HIGH', 'URGENT']);
 export const themePreferenceEnum = pgEnum('theme_preference', ['LIGHT', 'DARK', 'SYSTEM']);
+export const invoiceStatusEnum = pgEnum('invoice_status', [
+  'DRAFT',
+  'SENT',
+  'PARTIALLY_PAID',
+  'PAID',
+  'OVERDUE',
+  'CANCELLED',
+]);
+export const invoicePaymentMethodEnum = pgEnum('invoice_payment_method', [
+  'BANK_TRANSFER',
+  'MOBILE_MONEY',
+  'CASH',
+  'CARD',
+  'CHEQUE',
+  'OTHER',
+]);
 
 // ---------------------------------------------------------------------------
 // Utilisateurs, organisations, accès
@@ -128,6 +148,8 @@ export const organizations = pgTable(
     ownerId: text('owner_id')
       .notNull()
       .references(() => users.id, { onDelete: 'restrict' }),
+    /** Date de la demande de suppression du compte (traitée par l'administration). */
+    deletionRequestedAt: timestamp('deletion_requested_at', { withTimezone: true, mode: 'date' }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -193,6 +215,12 @@ export const organizationSettings = pgTable(
     numberingNextValue: integer('numbering_next_value').notNull().default(1),
     numberingResetYearly: boolean('numbering_reset_yearly').notNull().default(true),
     numberingYear: integer('numbering_year'),
+    /** Numérotation des factures (indépendante de celle des devis). */
+    invoiceNumberingFormat: text('invoice_numbering_format').notNull().default('FAC-{YYYY}-{SEQ:4}'),
+    invoiceNumberingNextValue: integer('invoice_numbering_next_value').notNull().default(1),
+    invoiceNumberingYear: integer('invoice_numbering_year'),
+    /** Délai de règlement par défaut (jours) appliqué à la date d'échéance. */
+    invoiceDueDays: integer('invoice_due_days').notNull().default(30),
     pricesIncludeTax: boolean('prices_include_tax').notNull().default(false),
     defaultPaymentTerms: text('default_payment_terms'),
     defaultTerms: text('default_terms'),
@@ -200,6 +228,11 @@ export const organizationSettings = pgTable(
     brandColor: text('brand_color').notNull().default('#2563EB'),
     brandColorSecondary: text('brand_color_secondary').notNull().default('#0F172A'),
     logoPosition: text('logo_position').notNull().default('LEFT'),
+    /**
+     * Personnalisation du modèle de document (couleurs, police, mise en page,
+     * éléments visibles). Appliquée à l'aperçu et à tous les exports.
+     */
+    templateCustomization: jsonb('template_customization'),
     emailReminders: boolean('email_reminders').notNull().default(true),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -569,6 +602,150 @@ export const payments = pgTable(
 );
 
 // ---------------------------------------------------------------------------
+// Factures (issues d'un devis accepté) et règlements
+// ---------------------------------------------------------------------------
+
+/**
+ * Une facture est un document autonome : elle conserve sa propre copie des
+ * coordonnées de l'entreprise, du client et de chaque ligne. Modifier ou
+ * supprimer le devis d'origine n'altère donc jamais une facture déjà émise
+ * (exigence de cohérence historique, notamment comptable).
+ */
+export const invoices = pgTable(
+  'invoices',
+  {
+    id: id(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    customerId: text('customer_id').references(() => customers.id, { onDelete: 'set null' }),
+    quotationId: text('quotation_id').references(() => quotations.id, { onDelete: 'set null' }),
+    createdById: text('created_by_id').references(() => users.id, { onDelete: 'set null' }),
+
+    number: text('number').notNull(),
+    title: text('title').notNull().default('Facture'),
+    status: invoiceStatusEnum('status').notNull().default('DRAFT'),
+    currency: text('currency').notNull().default('XOF'),
+    locale: text('locale').notNull().default('fr-FR'),
+
+    issueDate: timestamp('issue_date', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    dueDate: timestamp('due_date', { withTimezone: true, mode: 'date' }),
+    sentAt: timestamp('sent_at', { withTimezone: true, mode: 'date' }),
+    paidAt: timestamp('paid_at', { withTimezone: true, mode: 'date' }),
+
+    /** Traçabilité : numéro du devis d'origine (la facture reste autonome). */
+    sourceQuotationNumber: text('source_quotation_number'),
+    customerReference: text('customer_reference'),
+    reference: text('reference'),
+
+    templateKey: text('template_key').notNull().default('minimaliste'),
+    customization: jsonb('customization'),
+    pricesIncludeTax: boolean('prices_include_tax').notNull().default(false),
+
+    subtotal: numeric('subtotal', { precision: 18, scale: 2 }).notNull().default('0'),
+    lineDiscountTotal: numeric('line_discount_total', { precision: 18, scale: 2 }).notNull().default('0'),
+    globalDiscountType: discountTypeEnum('global_discount_type'),
+    globalDiscountValue: numeric('global_discount_value', { precision: 18, scale: 4 }).notNull().default('0'),
+    globalDiscountTotal: numeric('global_discount_total', { precision: 18, scale: 2 }).notNull().default('0'),
+    netBeforeTax: numeric('net_before_tax', { precision: 18, scale: 2 }).notNull().default('0'),
+    taxTotal: numeric('tax_total', { precision: 18, scale: 2 }).notNull().default('0'),
+    total: numeric('total', { precision: 18, scale: 2 }).notNull().default('0'),
+    /** Somme des règlements enregistrés (maintenue par le service). */
+    amountPaid: numeric('amount_paid', { precision: 18, scale: 2 }).notNull().default('0'),
+
+    companySnapshot: jsonb('company_snapshot'),
+    customerSnapshot: jsonb('customer_snapshot'),
+    terms: jsonb('terms'),
+    notes: text('notes'),
+
+    isArchived: boolean('is_archived').notNull().default(false),
+    deletedAt: timestamp('deleted_at', { withTimezone: true, mode: 'date' }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    uniqueIndex('invoices_org_number_unique').on(table.organizationId, table.number),
+    index('invoices_org_status_idx').on(table.organizationId, table.status),
+    index('invoices_org_issue_date_idx').on(table.organizationId, table.issueDate),
+    index('invoices_org_due_date_idx').on(table.organizationId, table.dueDate),
+    index('invoices_customer_idx').on(table.customerId),
+    index('invoices_quotation_idx').on(table.quotationId),
+    index('invoices_org_archived_idx').on(table.organizationId, table.isArchived),
+  ],
+);
+
+export const invoiceItems = pgTable(
+  'invoice_items',
+  {
+    id: id(),
+    invoiceId: text('invoice_id')
+      .notNull()
+      .references(() => invoices.id, { onDelete: 'cascade' }),
+    productId: text('product_id').references(() => products.id, { onDelete: 'set null' }),
+    position: integer('position').notNull().default(0),
+    name: text('name').notNull(),
+    description: text('description'),
+    unit: text('unit').notNull().default('unité'),
+    quantity: numeric('quantity', { precision: 18, scale: 4 }).notNull(),
+    unitPrice: numeric('unit_price', { precision: 18, scale: 4 }).notNull(),
+    discountType: discountTypeEnum('discount_type'),
+    discountValue: numeric('discount_value', { precision: 9, scale: 4 }).notNull().default('0'),
+    taxRate: numeric('tax_rate', { precision: 7, scale: 4 }).notNull().default('18'),
+    lineGross: numeric('line_gross', { precision: 18, scale: 2 }).notNull().default('0'),
+    lineDiscount: numeric('line_discount', { precision: 18, scale: 2 }).notNull().default('0'),
+    lineNet: numeric('line_net', { precision: 18, scale: 2 }).notNull().default('0'),
+    lineTax: numeric('line_tax', { precision: 18, scale: 2 }).notNull().default('0'),
+    lineTotal: numeric('line_total', { precision: 18, scale: 2 }).notNull().default('0'),
+  },
+  (table) => [index('invoice_items_invoice_idx').on(table.invoiceId, table.position)],
+);
+
+/**
+ * Règlement d'une facture. Les paiements saisis ici sont des constats
+ * manuels (virement reçu, espèces, mobile money…) : aucun encaissement en
+ * ligne n'est simulé tant qu'un prestataire n'est pas configuré et vérifié.
+ */
+export const invoicePayments = pgTable(
+  'invoice_payments',
+  {
+    id: id(),
+    invoiceId: text('invoice_id')
+      .notNull()
+      .references(() => invoices.id, { onDelete: 'cascade' }),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    amount: numeric('amount', { precision: 18, scale: 2 }).notNull(),
+    method: invoicePaymentMethodEnum('method').notNull().default('BANK_TRANSFER'),
+    reference: text('reference'),
+    note: text('note'),
+    paidAt: timestamp('paid_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    recordedById: text('recorded_by_id').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    index('invoice_payments_invoice_idx').on(table.invoiceId, table.paidAt),
+    index('invoice_payments_org_idx').on(table.organizationId, table.paidAt),
+  ],
+);
+
+export const invoiceStatusHistory = pgTable(
+  'invoice_status_history',
+  {
+    id: id(),
+    invoiceId: text('invoice_id')
+      .notNull()
+      .references(() => invoices.id, { onDelete: 'cascade' }),
+    fromStatus: invoiceStatusEnum('from_status'),
+    toStatus: invoiceStatusEnum('to_status').notNull(),
+    actorUserId: text('actor_user_id'),
+    note: text('note'),
+    createdAt: createdAt(),
+  },
+  (table) => [index('invoice_status_history_invoice_idx').on(table.invoiceId, table.createdAt)],
+);
+
+// ---------------------------------------------------------------------------
 // Notifications, e-mails, support
 // ---------------------------------------------------------------------------
 
@@ -802,6 +979,28 @@ export const quotationsRelations = relations(quotations, ({ one, many }) => ({
   statusHistory: many(quotationStatusHistory),
   shares: many(quotationShares),
   approvalEvents: many(quotationApprovalEvents),
+  invoices: many(invoices),
+}));
+
+export const invoicesRelations = relations(invoices, ({ one, many }) => ({
+  organization: one(organizations, { fields: [invoices.organizationId], references: [organizations.id] }),
+  customer: one(customers, { fields: [invoices.customerId], references: [customers.id] }),
+  quotation: one(quotations, { fields: [invoices.quotationId], references: [quotations.id] }),
+  createdBy: one(users, { fields: [invoices.createdById], references: [users.id] }),
+  items: many(invoiceItems),
+  payments: many(invoicePayments),
+  statusHistory: many(invoiceStatusHistory),
+}));
+
+export const invoiceItemsRelations = relations(invoiceItems, ({ one }) => ({
+  invoice: one(invoices, { fields: [invoiceItems.invoiceId], references: [invoices.id] }),
+  product: one(products, { fields: [invoiceItems.productId], references: [products.id] }),
+}));
+
+export const invoicePaymentsRelations = relations(invoicePayments, ({ one }) => ({
+  invoice: one(invoices, { fields: [invoicePayments.invoiceId], references: [invoices.id] }),
+  organization: one(organizations, { fields: [invoicePayments.organizationId], references: [organizations.id] }),
+  recordedBy: one(users, { fields: [invoicePayments.recordedById], references: [users.id] }),
 }));
 
 export const quotationItemsRelations = relations(quotationItems, ({ one }) => ({
@@ -861,6 +1060,13 @@ export type AuditLog = typeof auditLogs.$inferSelect;
 export type SupportTicket = typeof supportTickets.$inferSelect;
 export type Session = typeof sessions.$inferSelect;
 export type QuotationTemplate = typeof quotationTemplates.$inferSelect;
+export type Invoice = typeof invoices.$inferSelect;
+export type NewInvoice = typeof invoices.$inferInsert;
+export type InvoiceItem = typeof invoiceItems.$inferSelect;
+export type NewInvoiceItem = typeof invoiceItems.$inferInsert;
+export type InvoicePayment = typeof invoicePayments.$inferSelect;
+export type NewInvoicePayment = typeof invoicePayments.$inferInsert;
+export type InvoiceStatusHistory = typeof invoiceStatusHistory.$inferSelect;
 
 export type OrgRole = (typeof orgRoleEnum.enumValues)[number];
 export type QuotationStatus = (typeof quotationStatusEnum.enumValues)[number];
@@ -869,6 +1075,8 @@ export type DiscountKind = (typeof discountTypeEnum.enumValues)[number];
 export type CustomerType = (typeof customerTypeEnum.enumValues)[number];
 export type ProductStatus = (typeof productStatusEnum.enumValues)[number];
 export type SubscriptionStatus = (typeof subscriptionStatusEnum.enumValues)[number];
+export type InvoiceStatus = (typeof invoiceStatusEnum.enumValues)[number];
+export type InvoicePaymentMethod = (typeof invoicePaymentMethodEnum.enumValues)[number];
 export type BillingInterval = (typeof billingIntervalEnum.enumValues)[number];
 export type PaymentProviderKind = (typeof paymentProviderEnum.enumValues)[number];
 export type NotificationKind = (typeof notificationTypeEnum.enumValues)[number];

@@ -12,6 +12,8 @@
 export interface PlanLimits {
   /** Nombre de devis créés par mois (null = illimité). */
   quotationsPerMonth: number | null;
+  /** Nombre de factures créées par mois (null = illimité). */
+  invoicesPerMonth: number | null;
   customers: number | null;
   products: number | null;
   members: number | null;
@@ -53,7 +55,7 @@ export const DEFAULT_PLANS: PlanDefinition[] = [
     priceMonthly: 0,
     priceYearly: 0,
     features: [
-      "Jusqu'à 5 devis par mois",
+      "Jusqu'à 5 devis et 5 factures par mois",
       '10 clients enregistrés',
       '20 produits et services',
       'Modèles de base',
@@ -63,6 +65,7 @@ export const DEFAULT_PLANS: PlanDefinition[] = [
     ],
     limits: {
       quotationsPerMonth: 5,
+      invoicesPerMonth: 5,
       customers: 10,
       products: 20,
       members: 1,
@@ -88,7 +91,7 @@ export const DEFAULT_PLANS: PlanDefinition[] = [
     priceMonthly: 0,
     priceYearly: 0,
     features: [
-      'Devis illimités',
+      'Devis et factures illimités',
       'Clients et produits illimités',
       'Personnalisation de votre image (logo, couleurs, typographie)',
       'Exports PDF, Word (.docx) et Excel (.xlsx)',
@@ -100,6 +103,7 @@ export const DEFAULT_PLANS: PlanDefinition[] = [
     ],
     limits: {
       quotationsPerMonth: null,
+      invoicesPerMonth: null,
       customers: null,
       products: null,
       members: 1,
@@ -135,6 +139,7 @@ export const DEFAULT_PLANS: PlanDefinition[] = [
     ],
     limits: {
       quotationsPerMonth: null,
+      invoicesPerMonth: null,
       customers: null,
       products: null,
       members: 10,
@@ -192,6 +197,8 @@ export function checkQuota(used: number, limit: number | null, label: string): Q
 }
 
 export const QUOTA_MESSAGES = {
+  invoices: (limit: number) =>
+    `Votre plan autorise ${limit} factures par mois. Passez au plan Pro pour facturer sans limite.`,
   quotations: (limit: number) =>
     `Votre plan autorise ${limit} devis par mois. Passez au plan Pro pour créer des devis illimités.`,
   customers: (limit: number) =>

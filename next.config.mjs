@@ -11,6 +11,12 @@ const devOrigins = (process.env.ALLOWED_DEV_ORIGINS ?? '*.e2b.app,localhost,127.
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  // Répertoire de sortie. En production (Vercel, `next start`) la valeur par
+  // défaut `.next` est utilisée. Localement, `NEXT_DIST_DIR=.next-build` permet
+  // de lancer une vérification de build **sans écraser** les fichiers du serveur
+  // de développement en cours d'exécution (sinon les deux se marchent dessus et
+  // le serveur de dev renvoie des erreurs ENOENT sur ses chunks).
+  distDir: process.env.NEXT_DIST_DIR || '.next',
   serverExternalPackages: ['pdfkit', 'exceljs', 'svg-to-pdfkit'],
   allowedDevOrigins: isDev ? devOrigins : [],
   experimental: {

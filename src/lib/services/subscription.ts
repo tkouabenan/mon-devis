@@ -2,6 +2,7 @@ import { and, count, eq, sql } from 'drizzle-orm';
 import { db } from '@/db';
 import {
   customers,
+  invoices,
   organizationMembers,
   companyProfiles,
   products,
@@ -124,6 +125,7 @@ function normalizeLimits(raw: unknown, planCode: string): PlanLimits {
   const value = raw as Partial<PlanLimits> & { exports?: Partial<PlanLimits['exports']> };
   return {
     quotationsPerMonth: value.quotationsPerMonth === undefined ? fallback.quotationsPerMonth : value.quotationsPerMonth,
+    invoicesPerMonth: value.invoicesPerMonth === undefined ? fallback.invoicesPerMonth : value.invoicesPerMonth,
     customers: value.customers === undefined ? fallback.customers : value.customers,
     products: value.products === undefined ? fallback.products : value.products,
     members: value.members === undefined ? fallback.members : value.members,
@@ -183,6 +185,7 @@ export async function setUsage(organizationId: string, metric: string, value: nu
 export interface UsageOverview {
   plan: OrganizationSubscription;
   quotationsThisMonth: number;
+  invoicesThisMonth: number;
   customers: number;
   products: number;
   members: number;
@@ -190,9 +193,10 @@ export interface UsageOverview {
 }
 
 export async function getUsageOverview(organizationId: string): Promise<UsageOverview> {
-  const [plan, quotationsThisMonth, customerRows, productRows, memberRows, companyRows] = await Promise.all([
+  const [plan, quotationsThisMonth, invoicesThisMonth, customerRows, productRows, memberRows, companyRows] = await Promise.all([
     getOrganizationSubscription(organizationId),
     readUsage(organizationId, 'quotations_created'),
+    readUsage(organizationId, 'invoices_created'),
     db.select({ value: count() }).from(customers).where(and(eq(customers.organizationId, organizationId), eq(customers.isArchived, false))),
     db.select({ value: count() }).from(products).where(and(eq(products.organizationId, organizationId), eq(products.status, 'ACTIVE'))),
     db.select({ value: count() }).from(organizationMembers).where(eq(organizationMembers.organizationId, organizationId)),
@@ -202,6 +206,7 @@ export async function getUsageOverview(organizationId: string): Promise<UsageOve
   return {
     plan,
     quotationsThisMonth,
+    invoicesThisMonth,
     customers: Number(customerRows[0]?.value ?? 0),
     products: Number(productRows[0]?.value ?? 0),
     members: Number(memberRows[0]?.value ?? 0),
@@ -213,7 +218,10 @@ export async function getUsageOverview(organizationId: string): Promise<UsageOve
  * Vérifie qu'une création est autorisée par le plan, sinon lève `QuotaError`
  * (converti en réponse HTTP 402 + message d'upgrade).
  */
-export async function assertCanCreate(organizationId: string, metric: 'quotation' | 'customer' | 'product' | 'member' | 'company'): Promise<void> {
+export async function assertCanCreate(
+  organizationId: string,
+  metric: 'quotation' | 'invoice' | 'customer' | 'product' | 'member' | 'company',
+): Promise<void> {
   const overview = await getUsageOverview(organizationId);
   const limits = overview.plan.limits;
 
@@ -224,6 +232,17 @@ export async function assertCanCreate(organizationId: string, metric: 'quotation
         throw new QuotaError(QUOTA_MESSAGES.quotations(limit), {
           metric: 'quotations',
           used: overview.quotationsThisMonth,
+          limit,
+        });
+      }
+      break;
+    }
+    case 'invoice': {
+      const limit = limits.invoicesPerMonth;
+      if (limit !== null && overview.invoicesThisMonth >= limit) {
+        throw new QuotaError(QUOTA_MESSAGES.invoices(limit), {
+          metric: 'invoices',
+          used: overview.invoicesThisMonth,
           limit,
         });
       }

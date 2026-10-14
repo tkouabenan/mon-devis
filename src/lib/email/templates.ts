@@ -161,6 +161,42 @@ export function quotationShareEmail(params: {
   };
 }
 
+export function invoiceSentEmail(params: {
+  customerName: string;
+  companyName: string;
+  invoiceNumber: string;
+  total: string;
+  currency: string;
+  dueDate: Date | null;
+  senderName: string;
+  senderEmail: string;
+  message?: string | null;
+}): EmailTemplate {
+  const title = `Facture ${params.invoiceNumber}`;
+  const content = [
+    paragraph(`Bonjour ${escapeHtml(params.customerName)},`),
+    paragraph(
+      `<strong>${escapeHtml(params.companyName)}</strong> vous adresse la facture <strong>${escapeHtml(params.invoiceNumber)}</strong> pour un montant de <strong>${escapeHtml(params.total)}</strong>.`,
+    ),
+    params.message ? paragraph(escapeHtml(params.message).replace(/\n/g, '<br />')) : '',
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 8px;border:1px solid ${BRAND.border};border-radius:12px;">
+      <tr><td style="padding:16px 18px;">
+        <p style="margin:0 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:0.06em;color:${BRAND.slate};">Montant total</p>
+        <p style="margin:0;font-size:22px;font-weight:700;color:${BRAND.navy};">${escapeHtml(params.total)}</p>
+        ${params.dueDate ? `<p style="margin:8px 0 0;font-size:13px;color:${BRAND.slate};">Échéance : ${escapeHtml(formatDate(params.dueDate, 'fr-FR'))}</p>` : ''}
+      </td></tr>
+    </table>`,
+    paragraph(
+      `<span style="color:${BRAND.slate};font-size:13px;">La facture est jointe en PDF. Les coordonnées de règlement figurent dans le document.</span>`,
+    ),
+  ].join('');
+  return {
+    subject: `${params.companyName} — Facture ${params.invoiceNumber} (${params.total})`,
+    html: layout(title, content, `Facture émise par ${params.senderName} (${params.senderEmail}).`),
+    text: `Bonjour ${params.customerName},\n\n${params.companyName} vous adresse la facture ${params.invoiceNumber}.\nMontant : ${params.total}\n${params.dueDate ? `Échéance : ${formatDate(params.dueDate)}.\n` : ''}\nLa facture est jointe en PDF.\n\n— ${params.companyName}`,
+  };
+}
+
 export function quotationDecisionEmail(params: {
   recipientName: string;
   quotationNumber: string;

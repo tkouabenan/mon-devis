@@ -160,7 +160,7 @@ interface TableOptions {
 type Doc = PDFKit.PDFDocument;
 
 export async function renderQuotationPdf(data: QuotationDocumentData, options: PdfOptions = {}): Promise<Buffer> {
-  const { quotation, items, company, customer, terms, style, totals } = data;
+  const { quotation, items, company, customer, terms, style, totals, labels } = data;
   const currency = quotation.currency;
   const padding = style.pagePadding;
   const headingFont = style.typography.headingFont;
@@ -175,9 +175,9 @@ export async function renderQuotationPdf(data: QuotationDocumentData, options: P
     margins: { top: padding, bottom: padding + FOOTER_RESERVED, left: padding, right: padding },
     bufferPages: true,
     info: {
-      Title: `Devis ${quotation.number}`,
+      Title: `${labels.documentTitle} ${quotation.number}`,
       Author: pdfText(company?.name ?? 'MON DEVIS'),
-      Subject: pdfText(quotation.title ?? 'Devis'),
+      Subject: pdfText(quotation.title ?? labels.documentTitle),
       Creator: 'MON DEVIS',
       Producer: 'MON DEVIS',
     },
@@ -233,7 +233,7 @@ export async function renderQuotationPdf(data: QuotationDocumentData, options: P
       .font(fontFor(headingFont, true))
       .fontSize(style.typography.titleSize)
       .fillColor(style.colors.headerText)
-      .text('DEVIS', padding, 26, { width: contentWidth, align: 'right', characterSpacing: style.typography.letterSpacing });
+      .text(labels.badge, padding, 26, { width: contentWidth, align: 'right', characterSpacing: style.typography.letterSpacing });
     doc
       .font(fontFor(bodyFont))
       .fontSize(baseSize)
@@ -242,7 +242,7 @@ export async function renderQuotationPdf(data: QuotationDocumentData, options: P
     if (style.visibility.validityDate && quotation.validUntil) {
       doc
         .fontSize(baseSize - 1)
-        .text(`Valable jusqu'au ${dateFr(quotation.validUntil)}`, padding, 26 + style.typography.titleSize + 4 + baseSize + 3, {
+        .text(`${labels.validityLabel} ${dateFr(quotation.validUntil)}`, padding, 26 + style.typography.titleSize + 4 + baseSize + 3, {
           width: contentWidth,
           align: 'right',
         });
@@ -263,7 +263,7 @@ export async function renderQuotationPdf(data: QuotationDocumentData, options: P
       .font(fontFor(headingFont, true))
       .fontSize(style.typography.titleSize)
       .fillColor(style.colors.headerText)
-      .text('DEVIS', boxX + 16, padding + 16, { width: boxWidth - 32 });
+      .text(labels.badge, boxX + 16, padding + 16, { width: boxWidth - 32 });
     doc
       .font(fontFor(bodyFont))
       .fontSize(baseSize)
@@ -275,7 +275,7 @@ export async function renderQuotationPdf(data: QuotationDocumentData, options: P
         width: boxWidth - 32,
       });
     if (style.visibility.validityDate && quotation.validUntil) {
-      doc.text(`Valable jusqu'au ${dateFr(quotation.validUntil)}`, boxX + 16, doc.y + 1, { width: boxWidth - 32 });
+      doc.text(`${labels.validityLabel} ${dateFr(quotation.validUntil)}`, boxX + 16, doc.y + 1, { width: boxWidth - 32 });
     }
 
     let leftY = padding;
@@ -326,7 +326,7 @@ export async function renderQuotationPdf(data: QuotationDocumentData, options: P
       .font(fontFor(headingFont, true))
       .fontSize(style.typography.titleSize)
       .fillColor(style.colors.primary)
-      .text('DEVIS', rightX, rightY, {
+      .text(labels.badge, rightX, rightY, {
         width: rightWidth,
         align: 'right',
         characterSpacing: style.typography.letterSpacing,
@@ -341,7 +341,7 @@ export async function renderQuotationPdf(data: QuotationDocumentData, options: P
     doc.text(`Émis le ${dateFr(quotation.issueDate)}`, rightX, rightY, { width: rightWidth, align: 'right' });
     rightY = doc.y;
     if (style.visibility.validityDate && quotation.validUntil) {
-      doc.text(`Valable jusqu'au ${dateFr(quotation.validUntil)}`, rightX, rightY, { width: rightWidth, align: 'right' });
+      doc.text(`${labels.validityLabel} ${dateFr(quotation.validUntil)}`, rightX, rightY, { width: rightWidth, align: 'right' });
       rightY = doc.y;
     }
     if (quotation.reference) {
@@ -401,10 +401,11 @@ export async function renderQuotationPdf(data: QuotationDocumentData, options: P
       ['Numéro', pdfText(quotation.number)],
       ['Date d’émission', dateFr(quotation.issueDate)],
     ];
-    if (style.visibility.validityDate) metaRows.push(['Valable jusqu’au', dateFr(quotation.validUntil)]);
+    if (style.visibility.validityDate) metaRows.push([labels.validityLabel, dateFr(quotation.validUntil)]);
     metaRows.push(['Devise', currency]);
     if (quotation.customerReference) metaRows.push(['Votre référence', pdfText(quotation.customerReference)]);
-    if (quotation.status) metaRows.push(['Statut', pdfText(quotationStatusLabel(quotation.status))]);
+    if (quotation.status) metaRows.push(['Statut', pdfText(labels.statusLabel(quotation.status))]);
+    for (const [label, value] of data.metaRows) metaRows.push([pdfText(label), pdfText(value)]);
 
     doc.save();
     doc.roundedRect(metaX, metaY, metaBoxWidth, metaRows.length * (baseSize + 7) + 14, style.table.borderRadius || 6).fill(mix(style.colors.primary, 0.94));
@@ -424,9 +425,9 @@ export async function renderQuotationPdf(data: QuotationDocumentData, options: P
     cursorY = Math.max(clientY, metaY) + style.sectionGap * 0.55;
   }
 
-  /* --- Titre du devis ---------------------------------------------------- */
+  /* --- Titre du document ------------------------------------------------- */
 
-  if (quotation.title && quotation.title.trim() && quotation.title.trim() !== 'Devis') {
+  if (quotation.title && quotation.title.trim() && quotation.title.trim() !== labels.documentTitle) {
     doc
       .font(fontFor(headingFont, true))
       .fontSize(baseSize + 2)
@@ -571,6 +572,9 @@ export async function renderQuotationPdf(data: QuotationDocumentData, options: P
     rows.push({ label: 'Acompte à la commande', value: amount(totals.depositAmount, currency) });
     rows.push({ label: 'Reste à payer', value: amount(totals.amountDue, currency), emphasis: true });
   }
+  for (const row of data.totalRows) {
+    rows.push({ label: row.label, value: amount(row.amount, currency), emphasis: row.emphasis, muted: row.muted });
+  }
 
   const rowHeight = baseSize + 9;
   const totalsHeight = rows.length * rowHeight + 8;
@@ -643,7 +647,7 @@ export async function renderQuotationPdf(data: QuotationDocumentData, options: P
   };
 
   if (style.visibility.terms) {
-    writeSection('Validité du devis', terms.validityPeriod ?? '');
+    writeSection(labels.validitySection, terms.validityPeriod ?? '');
     writeSection('Conditions de paiement', terms.paymentTerms ?? '');
     writeSection('Délai de livraison / exécution', terms.deliveryTime ?? '');
     writeSection('Garantie', terms.warranty ?? '');
@@ -651,6 +655,10 @@ export async function renderQuotationPdf(data: QuotationDocumentData, options: P
     for (const block of terms.blocks ?? []) {
       writeSection(block.label, block.content);
     }
+  }
+
+  for (const extra of data.extraSections) {
+    writeSection(extra.title, extra.body);
   }
 
   if (style.visibility.notes && terms.notes && terms.notes.trim()) {
@@ -688,7 +696,7 @@ export async function renderQuotationPdf(data: QuotationDocumentData, options: P
     const half = (contentWidth - 24) / 2;
 
     doc.font(fontFor(bodyFont)).fontSize(baseSize - 2).fillColor(muted);
-    doc.text('Bon pour accord — signature du client', padding, cursorY, { width: half });
+    doc.text(pdfText(labels.signatureLabel), padding, cursorY, { width: half });
     doc.text(pdfText(company?.signatureLabel ?? 'Pour l’entreprise'), padding + half + 24, cursorY, { width: half });
 
     const lineY = cursorY + 46;
@@ -753,7 +761,7 @@ export async function renderQuotationPdf(data: QuotationDocumentData, options: P
           ]
             .filter(Boolean)
             .join(' · ')
-        : 'MON DEVIS') + ` · Devis ${quotation.number}`;
+        : 'MON DEVIS') + ` · ${labels.documentTitle} ${quotation.number}`;
     const footerText = options.footerNote ? `${baseFooter} · ${options.footerNote}` : baseFooter;
 
     doc

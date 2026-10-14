@@ -6,14 +6,24 @@ import { env } from '@/lib/env';
 /**
  * Connexion PostgreSQL (pool partagé, réutilisé entre les rechargements à chaud
  * et les invocations serverless d'une même instance).
+ *
+ * La connexion est créée **paresseusement**, au premier accès réel : importer ce
+ * module n'ouvre aucune socket et ne réclame aucune variable d'environnement.
+ * C'est indispensable pour que `next build` (qui charge les modules de chaque
+ * route pour collecter les données de page) réussisse dans un environnement de
+ * build sans secret — sur Vercel par exemple — et pour que l'erreur de
+ * configuration apparaisse clairement à la requête, plus le message de la sonde
+ * `/api/health`.
  */
+
+type DrizzleDatabase = ReturnType<typeof drizzle<typeof schema>>;
 
 const globalForDb = globalThis as unknown as {
   __monDevisPool?: Pool;
-  __monDevisDb?: ReturnType<typeof drizzle<typeof schema>>;
+  __monDevisDb?: DrizzleDatabase;
 };
 
-function createPool(): Pool {
+export function createPool(): Pool {
   if (!env.databaseUrl) {
     throw new Error(
       "DATABASE_URL n'est pas configurée. Lancez `npm run db:start` puis copiez .env.example vers .env.",
@@ -32,16 +42,42 @@ function createPool(): Pool {
   return pool;
 }
 
-export const pool = globalForDb.__monDevisPool ?? createPool();
-if (!env.isProduction) globalForDb.__monDevisPool = pool;
+/** Pool partagé, créé au premier accès (jamais à l'import). */
+export function getPool(): Pool {
+  if (globalForDb.__monDevisPool) return globalForDb.__monDevisPool;
+  const created = createPool();
+  // En production serverless, le pool vit le temps de l'instance ; on le mémorise
+  // systématiquement pour éviter d'ouvrir une connexion par requête.
+  globalForDb.__monDevisPool = created;
+  return created;
+}
 
-export const db =
-  globalForDb.__monDevisDb ??
-  drizzle(pool, {
+/** Instance Drizzle, créée au premier accès réel. */
+export function getDb(): DrizzleDatabase {
+  if (globalForDb.__monDevisDb) return globalForDb.__monDevisDb;
+  const instance = drizzle(getPool(), {
     schema,
     logger: process.env.DEBUG_SQL === '1',
   });
-if (!env.isProduction) globalForDb.__monDevisDb = db;
+  globalForDb.__monDevisDb = instance;
+  return instance;
+}
+
+/**
+ * Client Drizzle utilisable exactement comme l'instance réelle (`db.select()`,
+ * `db.insert()`, `db.transaction()`…). Les accès sont transparents : le pool et
+ * l'instance ne sont créés qu'à la première opération.
+ */
+export const db = new Proxy({} as DrizzleDatabase, {
+  get(_target, property) {
+    const instance = getDb() as unknown as Record<PropertyKey, unknown>;
+    const value = instance[property];
+    return typeof value === 'function' ? value.bind(instance) : value;
+  },
+  has(_target, property) {
+    return property in (getDb() as unknown as object);
+  },
+});
 
 export { schema };
-export type Database = typeof db;
+export type Database = DrizzleDatabase;
