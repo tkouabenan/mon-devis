@@ -1,115 +1,182 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { db } from '@/db';
-import { quotations } from '@/db/schema';
-import { loadImageDataUri } from './assets';
-import { renderQuotationPdf } from './pdf';
-import { renderQuotationDocx } from './docx';
-import { renderQuotationXlsx } from './xlsx';
-import { buildDocumentData, type QuotationDocumentData, type CompanySnapshot } from '@/lib/services/quotations';
-import { sanitizeFileName } from '@/lib/utils';
+import { customers, quotations } from '@/db/schema';
+import { buildDocumentData, type QuotationDocumentData } from '@/lib/quotation-document';
+import { listItems } from '@/lib/services/quotations';
+import { renderQuotationPdf, type PdfOptions } from '@/lib/documents/pdf';
+import { renderQuotationDocx } from '@/lib/documents/docx';
+import { renderQuotationXlsx } from '@/lib/documents/xlsx';
+import { prepareLogo } from '@/lib/documents/logo';
 
 /**
- * Façade d'export : produit le document réel du devis enregistré dans le format demandé.
- * Aucun fichier statique : tout est généré à partir des données en base.
+ * Façade des exports de documents.
+ *
+ *   generateQuotationDocument({ organizationId, quotationId, format: 'pdf' })
+ *
+ * Charge le devis depuis la base, assemble les données de rendu puis délègue
+ * au générateur du format demandé. Les exports sont toujours recalculés depuis
+ * les lignes stockées : impossible de produire un PDF incohérent avec l'écran.
  */
 
 export type ExportFormat = 'pdf' | 'docx' | 'xlsx';
 
-export const EXPORT_FORMATS: { value: ExportFormat; label: string; extension: string; mimeType: string; description: string }[] = [
+export interface ExportFormatDefinition {
+  format: ExportFormat;
+  label: string;
+  extension: string;
+  mimeType: string;
+  description: string;
+}
+
+export const EXPORT_FORMATS: ExportFormatDefinition[] = [
   {
-    value: 'pdf',
+    format: 'pdf',
     label: 'PDF',
     extension: 'pdf',
     mimeType: 'application/pdf',
-    description: 'Document prêt à imprimer et à envoyer, texte sélectionnable.',
+    description: 'Prêt à envoyer : mise en page A4, texte sélectionnable, plusieurs pages si nécessaire.',
   },
   {
-    value: 'docx',
+    format: 'docx',
     label: 'Word',
     extension: 'docx',
     mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    description: 'Document Word entièrement modifiable (tableaux et styles conservés).',
+    description: 'Entièrement éditable dans Word, LibreOffice ou Google Docs.',
   },
   {
-    value: 'xlsx',
+    format: 'xlsx',
     label: 'Excel',
     extension: 'xlsx',
     mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    description: 'Classeur Excel avec formules, formats de devise et mise en page d’impression.',
+    description: 'Tableur avec formules : quantités, remises, TVA et totaux recalculés automatiquement.',
   },
 ];
+
+export function getExportFormat(format: string): ExportFormatDefinition {
+  return EXPORT_FORMATS.find((definition) => definition.format === format) ?? EXPORT_FORMATS[0];
+}
+
+/**
+ * Nom de fichier normalisé : MON-DEVIS_DEV-2026-0001_CLIENT.pdf
+ *
+ * Les accents sont translittérés et les séparateurs normalisés car ce nom
+ * traverse des systèmes de fichiers, des clients de messagerie et des URL.
+ */
+export function buildFileName(quotationNumber: string, customerName: string | null | undefined, format: ExportFormat): string {
+  const normalize = (value: string) =>
+    value
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 60);
+
+  const safeNumber = normalize(quotationNumber || 'DEVIS') || 'DEVIS';
+  const safeCustomer = normalize(customerName || 'CLIENT') || 'CLIENT';
+  return `MON-DEVIS_${safeNumber}_${safeCustomer}.${getExportFormat(format).extension}`;
+}
+
+export interface GenerateDocumentOptions {
+  organizationId: string;
+  quotationId: string;
+  format: ExportFormat;
+  /** Forcé par la formule d'abonnement (plan gratuit). */
+  watermark?: boolean;
+}
 
 export interface GeneratedDocument {
   buffer: Buffer;
   fileName: string;
   mimeType: string;
   format: ExportFormat;
+  quotationNumber: string;
+  customerName: string | null;
+  /**
+   * Valeur de la tête de lecture du navigateur : les documents sont transmis
+   * via une réponse HTTP, jamais écrits sur le disque du serveur.
+   */
+  size: number;
 }
 
-/** Nom de fichier normalisé : MON-DEVIS_DEV-2026-0001_CLIENT.pdf */
-export function buildFileName(quotationNumber: string, customerName: string | null | undefined, format: ExportFormat): string {
-  const extension = EXPORT_FORMATS.find((entry) => entry.value === format)?.extension ?? format;
-  const customer = sanitizeFileName(customerName || 'CLIENT').toUpperCase();
-  const number = sanitizeFileName(quotationNumber).toUpperCase();
-  return `MON-DEVIS_${number}_${customer}.${extension}`;
-}
+export async function generateQuotationDocument(options: GenerateDocumentOptions): Promise<GeneratedDocument> {
+  const { organizationId, quotationId, format } = options;
 
-export interface GenerateOptions {
-  organizationId: string;
-  quotationId: string;
-  format: ExportFormat;
-  watermark?: boolean;
-  footerNote?: string | null;
-}
-
-/** Charge le devis, prépare les données de rendu puis génère le document. */
-export async function generateQuotationDocument(options: GenerateOptions): Promise<GeneratedDocument> {
   const [quotation] = await db
     .select()
     .from(quotations)
-    .where(and(eq(quotations.organizationId, options.organizationId), eq(quotations.id, options.quotationId)))
+    .where(and(eq(quotations.id, quotationId), eq(quotations.organizationId, organizationId), isNull(quotations.deletedAt)))
     .limit(1);
 
-  if (!quotation) throw new Error('Devis introuvable.');
+  if (!quotation) {
+    throw new Error('Devis introuvable.');
+  }
 
-  const items = await db.query.quotationItems.findMany({
-    where: (table, { eq: equals }) => equals(table.quotationId, options.quotationId),
-    orderBy: (table, { asc }) => [asc(table.position)],
-  });
+  const items = await listItems(quotationId);
 
-  const company = quotation.companySnapshot as unknown as CompanySnapshot | null;
-  const logoDataUri = await loadImageDataUri(company?.logoUrl ?? null);
+  const logoUrl = (quotation.companySnapshot as { logoUrl?: string | null } | null)?.logoUrl ?? null;
+
+  const preparedLogo = await prepareLogo(logoUrl);
 
   const data = buildDocumentData({
     quotation,
     items,
-    watermark: options.watermark,
-    logoDataUri,
+    watermark: options.watermark ?? false,
+    logoDataUri: preparedLogo?.dataUri ?? null,
   });
 
-  const format = EXPORT_FORMATS.find((entry) => entry.value === options.format);
-  if (!format) throw new Error(`Format d'export inconnu : ${options.format}`);
-
-  const buffer = await renderDocument(data, options);
+  const buffer = await renderDocument(data, { format, watermark: options.watermark });
+  const customerName = data.customer?.companyName || data.customer?.name || null;
 
   return {
     buffer,
-    fileName: buildFileName(quotation.number, data.customer?.companyName || data.customer?.name, options.format),
-    mimeType: format.mimeType,
-    format: options.format,
+    fileName: buildFileName(quotation.number, customerName, format),
+    mimeType: getExportFormat(format).mimeType,
+    format,
+    quotationNumber: quotation.number,
+    customerName,
+    size: buffer.byteLength,
   };
 }
 
-/** Rendu bas niveau à partir de données déjà assemblées (utilisé par les tests). */
-export async function renderDocument(data: QuotationDocumentData, options: { format: ExportFormat; watermark?: boolean; footerNote?: string | null }): Promise<Buffer> {
+export interface RenderDocumentOptions {
+  format: ExportFormat;
+  /** Filigrane « MON DEVIS » (plan gratuit). */
+  watermark?: boolean;
+  /** Mention de bas de page (ex. lien d'acceptation en ligne). */
+  footerNote?: string;
+}
+
+/** Rendu pur (aucun accès base) : utilisé par l'API, les tests et les aperçus. */
+export async function renderDocument(data: QuotationDocumentData, options: RenderDocumentOptions): Promise<Buffer> {
   switch (options.format) {
     case 'pdf':
       return renderQuotationPdf(data, { watermark: options.watermark, footerNote: options.footerNote });
     case 'docx':
-      return renderQuotationDocx(data, { watermark: options.watermark });
+      return renderQuotationDocx(data);
     case 'xlsx':
       return renderQuotationXlsx(data);
     default:
-      throw new Error(`Format d'export inconnu : ${options.format}`);
+      throw new Error(`Format d'export inconnu : ${String(options.format)}`);
   }
 }
+
+/** Charge un devis et ses données de rendu (aperçu, impression, partage). */
+export async function getQuotationDocumentData(organizationId: string, quotationId: string): Promise<QuotationDocumentData> {
+  const [quotation] = await db
+    .select()
+    .from(quotations)
+    .where(and(eq(quotations.id, quotationId), eq(quotations.organizationId, organizationId), isNull(quotations.deletedAt)))
+    .limit(1);
+
+  if (!quotation) throw new Error('Devis introuvable.');
+
+  const items = await listItems(quotationId);
+  const logoUrl = (quotation.companySnapshot as { logoUrl?: string | null } | null)?.logoUrl ?? null;
+  const preparedLogo = await prepareLogo(logoUrl);
+
+  return buildDocumentData({ quotation, items, logoDataUri: preparedLogo?.dataUri ?? null });
+}
+
+export { renderQuotationPdf, renderQuotationDocx, renderQuotationXlsx };
+export type { QuotationDocumentData };

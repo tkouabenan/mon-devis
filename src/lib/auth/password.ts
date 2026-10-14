@@ -32,31 +32,9 @@ export function safeCompare(a: string, b: string): boolean {
   return timingSafeEqual(bufferA, bufferB);
 }
 
-/** Estimation de la robustesse d'un mot de passe (0-4) pour l'indicateur d'interface. */
-export function passwordStrength(password: string): { score: number; label: string } {
-  let score = 0;
-  if (password.length >= 8) score += 1;
-  if (password.length >= 12) score += 1;
-  if (/[a-z]/.test(password) && /[A-Z]/.test(password)) score += 1;
-  if (/\d/.test(password)) score += 1;
-  if (/[^A-Za-z0-9]/.test(password)) score += 1;
-  const normalized = Math.min(4, Math.max(0, score - 1));
-  const labels = ['Très faible', 'Faible', 'Moyen', 'Bon', 'Excellent'];
-  return { score: normalized, label: labels[normalized] };
-}
-
-export const PASSWORD_MIN_LENGTH = 8;
-
-/** Valide un mot de passe selon la politique de la plateforme. */
-export function validatePasswordPolicy(password: string): { valid: boolean; message?: string } {
-  if (password.length < PASSWORD_MIN_LENGTH) {
-    return { valid: false, message: `Le mot de passe doit contenir au moins ${PASSWORD_MIN_LENGTH} caractères.` };
-  }
-  if (password.length > 200) {
-    return { valid: false, message: 'Le mot de passe ne peut pas dépasser 200 caractères.' };
-  }
-  if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) {
-    return { valid: false, message: 'Le mot de passe doit contenir au moins une lettre et un chiffre.' };
-  }
-  return { valid: true };
-}
+/**
+ * Politique de mot de passe : implémentée dans un module pur
+ * (`./password-policy`) afin d'être réutilisée telle quelle dans les
+ * formulaires clients, sans embarquer `node:crypto` ni bcrypt.
+ */
+export { PASSWORD_MIN_LENGTH, validatePasswordPolicy, passwordStrength } from './password-policy';

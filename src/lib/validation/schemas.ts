@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { CURRENCIES } from '@/lib/currency';
-import { validatePasswordPolicy } from '@/lib/auth/password';
+import { validatePasswordPolicy } from '@/lib/auth/password-policy';
 import { validateNumberingFormat } from '@/lib/numbering';
 
 /**

@@ -1,64 +1,85 @@
 import ExcelJS from 'exceljs';
-import { currencyDecimals, getCurrency } from '@/lib/currency';
-import type { QuotationDocumentData } from '@/lib/services/quotations';
-import type { TemplateStyle } from '@/lib/templates';
-import { toAmountNumber } from '@/lib/money';
+import type { QuotationDocumentData } from '@/lib/quotation-document';
 
 /**
- * Génération Excel (.xlsx) : classeur structuré et modifiable.
+ * Générateur XLSX : un tableur de travail, pas une image figée du devis.
  *
- * - les lignes sont saisies avec de vraies formules Excel (quantité × prix, remises,
- *   sous-totaux, TVA, total) : l'utilisateur peut modifier une quantité et les
- *   totaux se recalculent dans Excel ;
- * - formats numériques adaptés à la devise (FCFA sans décimale, EUR/USD à 2 décimales) ;
- * - mise en page prête à imprimer (A4 paysage, ajustement à la largeur, titres répétés).
+ *  - chaque ligne du devis est une vraie ligne de tableur (quantité, prix, remise, TVA) ;
+ *  - les totaux sont des formules Excel vivantes : modifier une quantité, un prix
+ *    ou un taux met immédiatement à jour le total HT, la TVA et le total TTC ;
+ *  - les formats de nombre respectent la devise (FCFA sans décimale, EUR/USD à deux décimales) ;
+ *  - mise en page prête à imprimer : A4, ajustement en largeur, ligne d'en-tête répétée.
+ *
+ * Colonnes : A # · B Désignation · C Description · D Unité · E Quantité ·
+ *            F Prix unitaire · G Remise · H Total ligne HT · I TVA % · J Montant TVA
  */
 
-function argb(hexColor: string): string {
-  return `FF${hexColor.replace('#', '').toUpperCase()}`;
+function hex(color: string): string {
+  return color.replace('#', '').toUpperCase().padStart(6, '0').slice(0, 6);
 }
 
-function numberFormatFor(currency: string): string {
-  const decimals = currencyDecimals(currency);
+function currencyDecimals(currency: string): number {
+  return ['XOF', 'XAF', 'JPY'].includes(currency.toUpperCase()) ? 0 : 2;
+}
+
+function currencySymbol(currency: string): string {
+  const symbols: Record<string, string> = { XOF: 'FCFA', XAF: 'FCFA', EUR: '€', USD: '$', GBP: '£' };
+  return symbols[currency.toUpperCase()] ?? currency.toUpperCase();
+}
+
+function numberFormat(currency: string, decimals = currencyDecimals(currency)): string {
   const zeros = decimals > 0 ? `.${'0'.repeat(decimals)}` : '';
-  return `#,##0${zeros} "${getCurrency(currency).symbol}"`;
+  return `#,##0${zeros}" ${currencySymbol(currency)}"`;
+}
+
+function toNumber(value: unknown, fallback = 0): number {
+  const numeric = Number(value ?? fallback);
+  return Number.isFinite(numeric) ? numeric : fallback;
 }
 
 function dateFr(value: Date | string | null | undefined): string {
-  if (!value) return '—';
-  const date = typeof value === 'string' ? new Date(value) : value;
-  if (Number.isNaN(date.getTime())) return '—';
-  return new Intl.DateTimeFormat('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(date);
+  if (!value) return '-';
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
-function addressString(entity: {
-  addressLine1?: string | null;
-  addressLine2?: string | null;
-  postalCode?: string | null;
-  city?: string | null;
-  country?: string | null;
-}): string {
-  return [
-    entity.addressLine1,
-    entity.addressLine2,
-    [entity.postalCode, entity.city].filter(Boolean).join(' '),
-    entity.country,
-  ]
-    .filter(Boolean)
-    .join(', ');
+function mixHex(hexColor: string, ratio: number): string {
+  const clean = hexColor.replace('#', '');
+  const int = Number.parseInt(clean.length === 3 ? clean.repeat(2) : clean, 16);
+  const r = (int >> 16) & 255;
+  const g = (int >> 8) & 255;
+  const b = int & 255;
+  const blend = (value: number) => Math.round(value + (255 - value) * ratio);
+  return `#${[blend(r), blend(g), blend(b)].map((value) => value.toString(16).padStart(2, '0')).join('')}`;
 }
+
+const STATUS_LABELS: Record<string, string> = {
+  DRAFT: 'Brouillon',
+  SENT: 'Envoyé',
+  PENDING: 'En attente',
+  ACCEPTED: 'Accepté',
+  REJECTED: 'Refusé',
+  EXPIRED: 'Expiré',
+  CANCELLED: 'Annulé',
+};
+
+const THIN = (color: string) => ({ style: 'thin' as const, color: { argb: `FF${hex(color)}` } });
 
 export async function renderQuotationXlsx(data: QuotationDocumentData): Promise<Buffer> {
   const { quotation, items, company, customer, terms, style, totals } = data;
   const currency = quotation.currency;
-  const numFmt = numberFormatFor(currency);
+  const moneyFormat = numberFormat(currency);
 
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'MON DEVIS';
+  workbook.lastModifiedBy = 'MON DEVIS';
   workbook.created = new Date();
-  workbook.title = `${quotation.title} ${quotation.number}`;
+  workbook.modified = new Date();
+  workbook.title = `Devis ${quotation.number}`;
+  workbook.subject = quotation.title ?? 'Devis';
+  workbook.company = company?.name ?? 'MON DEVIS';
 
-  // --- Feuille principale ------------------------------------------------
   const sheet = workbook.addWorksheet('Devis', {
     pageSetup: {
       paperSize: 9, // A4
@@ -68,303 +89,404 @@ export async function renderQuotationXlsx(data: QuotationDocumentData): Promise<
       fitToHeight: 0,
       margins: { left: 0.5, right: 0.5, top: 0.6, bottom: 0.6, header: 0.3, footer: 0.3 },
       horizontalCentered: true,
-      printTitlesRow: '14:14',
     },
-    views: [{ showGridLines: false }],
+    properties: { defaultRowHeight: 16 },
   });
 
-  sheet.columns = [
-    { key: 'position', width: 5 },
-    { key: 'name', width: 38 },
-    { key: 'description', width: 34 },
-    { key: 'unit', width: 10 },
-    { key: 'quantity', width: 9 },
-    { key: 'unitPrice', width: 15 },
-    { key: 'discount', width: 12 },
-    { key: 'net', width: 15 },
-    { key: 'taxRate', width: 9 },
-    { key: 'taxAmount', width: 14 },
-    { key: 'total', width: 16 },
-  ];
+  /* --- Colonnes --------------------------------------------------------- */
 
-  const lastColumn = 'K';
-
-  // Bandeau de titre
-  sheet.mergeCells(`A1:${lastColumn}1`);
-  const titleCell = sheet.getCell('A1');
-  titleCell.value = company?.name ? `${company.name} — ${quotation.title || 'Devis'}` : `Devis ${quotation.number}`;
-  titleCell.font = { bold: true, size: 16, color: { argb: argb('#FFFFFF') } };
-  titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: argb(style.colors.primary) } };
-  titleCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-  sheet.getRow(1).height = 30;
-
-  // Coordonnées de l'entreprise
-  sheet.mergeCells(`A3:E3`);
-  sheet.getCell('A3').value = 'ÉMIS PAR';
-  sheet.getCell('A3').font = { bold: true, size: 9, color: { argb: argb(style.colors.muted) } };
-  sheet.mergeCells('A4:E4');
-  sheet.getCell('A4').value = company?.name ?? 'Votre entreprise';
-  sheet.getCell('A4').font = { bold: true, size: 12 };
-  sheet.mergeCells('A5:E5');
-  sheet.getCell('A5').value = addressString(company ?? {});
-  sheet.getCell('A5').font = { size: 9, color: { argb: argb(style.colors.muted) } };
-  sheet.mergeCells('A6:E6');
-  sheet.getCell('A6').value = [company?.phone, company?.email, company?.website].filter(Boolean).join(' · ');
-  sheet.getCell('A6').font = { size: 9, color: { argb: argb(style.colors.muted) } };
-  sheet.mergeCells('A7:E7');
-  sheet.getCell('A7').value = [
-    company?.registrationNumber ? `RCCM : ${company.registrationNumber}` : null,
-    company?.taxId ? `N° contribuable : ${company.taxId}` : null,
-  ]
-    .filter(Boolean)
-    .join(' · ');
-  sheet.getCell('A7').font = { size: 9, color: { argb: argb(style.colors.muted) } };
-
-  // Informations du devis
-  const metaLeft = 6;
-  const metaRows: [string, string | number][] = [
-    ['Numéro de devis', quotation.number],
-    ['Date d’émission', dateFr(quotation.issueDate)],
-    ['Valable jusqu’au', dateFr(quotation.validUntil)],
-    ['Devise', currency],
-    ['Référence', quotation.reference ?? '—'],
-    ['Référence client', quotation.customerReference ?? '—'],
-    ['Statut', quotation.status],
-  ];
-  sheet.getCell(metaLeft, 3).value = 'DEVIS';
-  sheet.getCell(metaLeft, 3).font = { bold: true, size: 10, color: { argb: argb(style.colors.muted) } };
-  metaRows.forEach(([label, value], index) => {
-    sheet.getCell(`G${4 + index}`).value = label;
-    sheet.getCell(`G${4 + index}`).font = { size: 9, color: { argb: argb(style.colors.muted) } };
-    sheet.getCell(`I${4 + index}`).value = value;
-    sheet.getCell(`I${4 + index}`).font = { size: 9, bold: true };
-    sheet.mergeCells(`I${4 + index}:${lastColumn}${4 + index}`);
-  });
-
-  // Client
-  sheet.getCell('A9').value = 'CLIENT';
-  sheet.getCell('A9').font = { bold: true, size: 9, color: { argb: argb(style.colors.muted) } };
-  sheet.mergeCells(`A9:E9`);
-  sheet.getCell('A10').value = customer?.companyName || customer?.name || 'Client à préciser';
-  sheet.getCell('A10').font = { bold: true, size: 11 };
-  sheet.mergeCells(`A10:E10`);
-  sheet.getCell('A11').value = [addressString(customer ?? {}), customer?.phone, customer?.email].filter(Boolean).join(' · ');
-  sheet.getCell('A11').font = { size: 9, color: { argb: argb(style.colors.muted) } };
-  sheet.mergeCells(`A11:E11`);
-  sheet.getCell('A12').value = customer?.taxId ? `N° contribuable : ${customer.taxId}` : '';
-  sheet.getCell('A12').font = { size: 9, color: { argb: argb(style.colors.muted) } };
-  sheet.mergeCells(`A12:E12`);
-
-  // --- Tableau des lignes ------------------------------------------------
-  const headerRowIndex = 14;
-  const headerRow = sheet.getRow(headerRowIndex);
   const showUnit = style.visibility.unitColumn;
   const showDiscount = style.visibility.discountColumn;
   const showTax = style.visibility.taxColumn;
 
-  const headers = ['N°', 'Désignation', 'Description', 'Unité', 'Qté', quotation.pricesIncludeTax ? 'P.U. TTC' : 'P.U. HT', 'Remise', 'Total net', 'TVA %', 'Montant TVA', 'TOTAL'];
-  headers.forEach((label, index) => {
+  sheet.columns = [
+    { key: 'position', width: 5 },
+    { key: 'name', width: 36 },
+    { key: 'description', width: 30 },
+    { key: 'unit', width: 10 },
+    { key: 'quantity', width: 10 },
+    { key: 'unitPrice', width: 17 },
+    { key: 'discount', width: 13 },
+    { key: 'lineNet', width: 17 },
+    { key: 'taxRate', width: 9 },
+    { key: 'lineTax', width: 15 },
+  ];
+
+  // Les colonnes masquées par le modèle restent présentes : les formules de total restent valides.
+  if (!showUnit) sheet.getColumn('unit').hidden = true;
+  if (!showDiscount) sheet.getColumn('discount').hidden = true;
+  if (!showTax) sheet.getColumn('taxRate').hidden = true;
+
+  const lastColumn = 'J';
+
+  /* --- Bandeau de titre ------------------------------------------------- */
+
+  sheet.mergeCells(`A1:${lastColumn}1`);
+  const titleCell = sheet.getCell('A1');
+  titleCell.value = `${company?.name ?? 'MON DEVIS'} — DEVIS ${quotation.number}`;
+  titleCell.font = { size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
+  titleCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+  titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${hex(style.colors.primary)}` } };
+  sheet.getRow(1).height = 30;
+
+  sheet.mergeCells(`A2:${lastColumn}2`);
+  const subtitleCell = sheet.getCell('A2');
+  subtitleCell.value = [
+    quotation.title && quotation.title.trim() ? quotation.title.trim() : 'Devis',
+    `Émis le ${dateFr(quotation.issueDate)}`,
+    style.visibility.validityDate && quotation.validUntil ? `Valable jusqu'au ${dateFr(quotation.validUntil)}` : null,
+    `Statut : ${STATUS_LABELS[quotation.status] ?? quotation.status}`,
+  ]
+    .filter(Boolean)
+    .join('   •   ');
+  subtitleCell.font = { size: 9, italic: true, color: { argb: `FF${hex(style.colors.muted)}` } };
+  subtitleCell.alignment = { vertical: 'middle', indent: 1 };
+  sheet.getRow(2).height = 20;
+
+  /* --- Blocs émetteur / client ----------------------------------------- */
+
+  const companyInfo: string[] = company
+    ? [
+        company.addressLine1,
+        company.addressLine2,
+        [company.postalCode, company.city].filter(Boolean).join(' ') || null,
+        company.country,
+        company.phone ? `Tél. : ${company.phone}` : null,
+        company.email,
+        company.website,
+        company.taxId ? `N° fiscal : ${company.taxId}` : null,
+        company.registrationNumber ? `RCCM : ${company.registrationNumber}` : null,
+      ].filter((line): line is string => Boolean(line && String(line).trim()))
+    : [];
+
+  const customerInfo: string[] = customer
+    ? [
+        customer.companyName || customer.name,
+        customer.companyName ? customer.name : null,
+        customer.addressLine1,
+        customer.addressLine2,
+        [customer.postalCode, customer.city].filter(Boolean).join(' ') || null,
+        customer.country,
+        customer.email,
+        customer.phone,
+        customer.taxId ? `N° fiscal : ${customer.taxId}` : null,
+      ].filter((line): line is string => Boolean(line && String(line).trim()))
+    : [];
+
+  sheet.getCell('A4').value = 'ÉMETTEUR';
+  sheet.getCell('F4').value = 'CLIENT';
+  for (const reference of ['A4', 'F4']) {
+    sheet.getCell(reference).font = { size: 9, bold: true, color: { argb: `FF${hex(style.colors.primary)}` } };
+  }
+
+  const infoRows = Math.max(companyInfo.length, customerInfo.length, 5);
+  for (let index = 0; index < infoRows; index += 1) {
+    const rowNumber = 5 + index;
+    const companyLine = companyInfo[index];
+    const customerLine = customerInfo[index];
+
+    if (companyLine) {
+      sheet.mergeCells(`A${rowNumber}:E${rowNumber}`);
+      const cell = sheet.getCell(`A${rowNumber}`);
+      cell.value = companyLine;
+      cell.font = { size: 9, bold: index === 0 };
+    }
+    if (customerLine) {
+      sheet.mergeCells(`F${rowNumber}:${lastColumn}${rowNumber}`);
+      const cell = sheet.getCell(`F${rowNumber}`);
+      cell.value = customerLine;
+      cell.font = { size: 9, bold: index === 0 };
+    }
+  }
+
+  const metaStart = 5 + infoRows;
+  const meta: [string, string][] = [
+    ['Numéro', quotation.number],
+    ['Date d’émission', dateFr(quotation.issueDate)],
+    ['Validité', style.visibility.validityDate ? dateFr(quotation.validUntil) : '—'],
+    ['Devise', currency],
+    ['Référence', quotation.reference ?? '—'],
+    ['Référence client', quotation.customerReference ?? '—'],
+  ];
+  meta.forEach(([label, value], index) => {
+    const rowNumber = metaStart + index;
+    const labelCell = sheet.getCell(`A${rowNumber}`);
+    labelCell.value = label;
+    labelCell.font = { size: 9, color: { argb: `FF${hex(style.colors.muted)}` } };
+
+    sheet.mergeCells(`B${rowNumber}:C${rowNumber}`);
+    const valueCell = sheet.getCell(`B${rowNumber}`);
+    valueCell.value = value;
+    valueCell.font = { size: 9, bold: true };
+  });
+
+  /* --- Lignes du devis -------------------------------------------------- */
+
+  const headerRowIndex = metaStart + meta.length + 1;
+  const headerLabels = [
+    '#',
+    'Désignation',
+    'Description',
+    'Unité',
+    'Quantité',
+    quotation.pricesIncludeTax ? 'Prix unitaire TTC' : 'Prix unitaire HT',
+    'Remise',
+    'Total ligne HT',
+    'TVA %',
+    'Montant TVA',
+  ];
+
+  const headerRow = sheet.getRow(headerRowIndex);
+  headerRow.height = 26;
+  headerLabels.forEach((label, index) => {
     const cell = headerRow.getCell(index + 1);
     cell.value = label;
-    cell.font = { bold: true, size: 9, color: { argb: argb(style.colors.tableHeaderText) } };
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: argb(style.colors.tableHeaderBackground) } };
-    cell.alignment = { vertical: 'middle', horizontal: index >= 4 ? 'right' : 'left', wrapText: true };
+    cell.font = { size: 9, bold: true, color: { argb: `FF${hex(style.colors.tableHeaderText)}` } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${hex(style.colors.tableHeaderBackground)}` } };
+    cell.alignment = { vertical: 'middle', horizontal: index >= 4 ? 'center' : 'left', wrapText: true };
     cell.border = {
-      top: { style: 'thin', color: { argb: argb(style.colors.border) } },
-      bottom: { style: 'thin', color: { argb: argb(style.colors.border) } },
-      left: { style: 'thin', color: { argb: argb(style.colors.border) } },
-      right: { style: 'thin', color: { argb: argb(style.colors.border) } },
+      top: THIN(style.colors.border),
+      bottom: THIN(style.colors.border),
+      left: THIN(style.colors.border),
+      right: THIN(style.colors.border),
     };
   });
-  headerRow.height = 26;
 
   const firstItemRow = headerRowIndex + 1;
-  const pricesIncludeTax = quotation.pricesIncludeTax;
+  const lastItemRow = firstItemRow + Math.max(items.length, 1) - 1;
 
   items.forEach((item, index) => {
-    const rowIndex = firstItemRow + index;
+    const rowNumber = firstItemRow + index;
+    const row = sheet.getRow(rowNumber);
     const line = totals.lines[index];
-    const row = sheet.getRow(rowIndex);
-    const quantity = toAmountNumber(item.quantity);
-    const unitPrice = toAmountNumber(item.unitPrice);
-    const discountValue = toAmountNumber(item.discountValue);
-    const taxRate = toAmountNumber(item.taxRate);
+    const discountValue = toNumber(item.discountValue);
+    const isPercentage = item.discountType === 'PERCENTAGE';
+    const taxRate = toNumber(item.taxRate) / 100;
 
     row.getCell(1).value = index + 1;
     row.getCell(2).value = item.name;
     row.getCell(3).value = item.description ?? '';
-    row.getCell(4).value = item.unit;
-    row.getCell(5).value = quantity;
-    row.getCell(6).value = unitPrice;
-    row.getCell(7).value =
-      item.discountType === 'PERCENTAGE'
-        ? discountValue / 100
-        : discountValue;
-    // Total net de la ligne : formule Excel vivante.
-    row.getCell(8).value = {
-      formula: item.discountType === 'PERCENTAGE' ? `E${rowIndex}*F${rowIndex}*(1-G${rowIndex})` : `E${rowIndex}*F${rowIndex}-G${rowIndex}`,
-      result: toAmountNumber(line.lineNetBeforeGlobal),
-    };
-    row.getCell(9).value = taxRate / 100;
-    row.getCell(10).value = { formula: `H${rowIndex}*I${rowIndex}`, result: toAmountNumber(line.lineTax) };
-    row.getCell(11).value = { formula: `H${rowIndex}+J${rowIndex}`, result: toAmountNumber(line.lineTotal) };
+    row.getCell(4).value = item.unit ?? '';
+    row.getCell(5).value = toNumber(item.quantity, 1);
+    row.getCell(6).value = toNumber(item.unitPrice);
 
-    [5, 6, 7, 8, 9, 10, 11].forEach((columnIndex) => {
-      const cell = row.getCell(columnIndex);
-      cell.numFmt = [7, 9].includes(columnIndex) ? '0.00%' : numFmt;
-      cell.alignment = { horizontal: 'right', vertical: 'middle' };
-      if (columnIndex === 5) cell.numFmt = '#,##0.####';
-    });
-    row.getCell(7).numFmt = item.discountType === 'PERCENTAGE' ? '0.00%' : numFmt;
-    row.getCell(11).font = { bold: true, size: 10 };
-    row.getCell(3).alignment = { wrapText: true, vertical: 'middle' };
-    row.getCell(2).font = { bold: true, size: 9 };
-    row.font = { ...row.font, size: 9 };
+    row.getCell(7).value = isPercentage ? discountValue / 100 : discountValue;
+    row.getCell(7).numFmt = isPercentage ? '0.00%' : moneyFormat;
 
-    if (style.table.style === 'striped' && index % 2 === 1) {
-      row.eachCell({ includeEmpty: true }, (cell) => {
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: argb(style.colors.tableAltRow) } };
-      });
-    }
-    row.eachCell({ includeEmpty: true }, (cell) => {
-      cell.border = {
-        top: { style: 'hair', color: { argb: argb(style.colors.border) } },
-        bottom: { style: 'hair', color: { argb: argb(style.colors.border) } },
-        left: { style: 'hair', color: { argb: argb(style.colors.border) } },
-        right: { style: 'hair', color: { argb: argb(style.colors.border) } },
+    // Total ligne HT : formule vivante adaptée au type de remise.
+    const gross = `E${rowNumber}*F${rowNumber}`;
+    const netFormula = !isPercentage && discountValue === 0
+      ? gross
+      : isPercentage
+        ? `${gross}-(${gross}*G${rowNumber})`
+        : `${gross}-G${rowNumber}`;
+    const netCell = row.getCell(8);
+    netCell.value = { formula: netFormula, result: toNumber(line ? line.lineNet : item.lineNet) };
+    netCell.numFmt = moneyFormat;
+
+    row.getCell(9).value = taxRate;
+    row.getCell(9).numFmt = '0.00%';
+
+    const taxCell = row.getCell(10);
+    taxCell.value = { formula: `H${rowNumber}*I${rowNumber}`, result: toNumber(line ? line.lineTax : item.lineTax) };
+    taxCell.numFmt = moneyFormat;
+
+    row.getCell(2).font = { size: 9, bold: true };
+    row.getCell(3).font = { size: 8, color: { argb: `FF${hex(style.colors.muted)}` } };
+
+    for (let column = 1; column <= 10; column += 1) {
+      const cell = row.getCell(column);
+      if (column !== 2 && column !== 3 && !cell.font) cell.font = { size: 9 };
+      cell.alignment = {
+        vertical: 'middle',
+        wrapText: column === 2 || column === 3,
+        horizontal: column >= 5 ? (column === 7 || column === 9 ? 'center' : 'right') : 'left',
       };
-    });
+      cell.border = { bottom: { style: 'hair', color: { argb: `FF${hex(style.colors.border)}` } } };
+      if (style.table.style === 'striped' && index % 2 === 1) {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${hex(mixHex(style.colors.primary, 0.95))}` } };
+      }
+    }
+    row.height = 18;
   });
 
-  if (!showUnit) {
-    sheet.getColumn(4).hidden = true;
-  }
-  if (!showDiscount) {
-    sheet.getColumn(7).hidden = true;
-  }
-  if (!showTax) {
-    sheet.getColumn(9).hidden = true;
-    sheet.getColumn(10).hidden = true;
+  if (items.length === 0) {
+    const emptyCell = sheet.getCell(`B${firstItemRow}`);
+    emptyCell.value = 'Aucune ligne dans ce devis.';
+    emptyCell.font = { size: 9, italic: true, color: { argb: `FF${hex(style.colors.muted)}` } };
   }
 
-  const lastItemRow = firstItemRow + Math.max(items.length, 1) - 1;
+  /* --- Totaux : uniquement des formules --------------------------------- */
 
-  // --- Totaux ------------------------------------------------------------
-  let cursorRow = lastItemRow + 2;
-  const addTotal = (label: string, formulaOrValue: string | number, options: { bold?: boolean; highlight?: boolean; formula?: string } = {}) => {
-    sheet.mergeCells(`G${cursorRow}:J${cursorRow}`);
-    const labelCell = sheet.getCell(`G${cursorRow}`);
-    labelCell.value = label;
-    labelCell.font = { bold: Boolean(options.bold), size: 9, color: { argb: argb(options.bold ? style.colors.text : style.colors.muted) } };
-    labelCell.alignment = { horizontal: 'right' };
+  const totalsStart = lastItemRow + 2;
+  const lineRange = `H${firstItemRow}:H${lastItemRow}`;
+  const taxRange = `J${firstItemRow}:J${lastItemRow}`;
+  const grossRange = `SUMPRODUCT(E${firstItemRow}:E${lastItemRow},F${firstItemRow}:F${lastItemRow})`;
 
-    const valueCell = sheet.getCell(`K${cursorRow}`);
-    if (options.formula) valueCell.value = { formula: options.formula, result: typeof formulaOrValue === 'number' ? formulaOrValue : undefined };
-    else valueCell.value = formulaOrValue;
-    valueCell.numFmt = numFmt;
-    valueCell.font = { bold: Boolean(options.bold || options.highlight), size: options.highlight ? 11 : 9 };
-    valueCell.alignment = { horizontal: 'right' };
-    if (options.highlight) {
-      valueCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: argb(style.colors.primary) } };
-      valueCell.font = { bold: true, size: 11, color: { argb: argb('#FFFFFF') } };
-      labelCell.font = { bold: true, size: 10, color: { argb: argb(style.colors.primary) } };
+  interface TotalRow {
+    label: string;
+    formula: string;
+    result: number;
+    emphasis?: boolean;
+  }
+
+  const totalRows: TotalRow[] = [
+    { label: 'Total des lignes HT (remises déduites)', formula: `SUM(${lineRange})`, result: toNumber(totals.subtotal) - toNumber(totals.lineDiscountTotal) },
+    { label: 'Remises sur lignes', formula: `${grossRange}-SUM(${lineRange})`, result: toNumber(totals.lineDiscountTotal) },
+  ];
+
+  if (quotation.globalDiscountType === 'PERCENTAGE' && toNumber(quotation.globalDiscountValue) > 0) {
+    totalRows.push({
+      label: `Remise globale (${toNumber(quotation.globalDiscountValue)} %)`,
+      formula: `(SUM(${lineRange}))*${toNumber(quotation.globalDiscountValue) / 100}`,
+      result: toNumber(totals.globalDiscountTotal),
+    });
+  } else if (quotation.globalDiscountType === 'FIXED' && toNumber(quotation.globalDiscountValue) > 0) {
+    totalRows.push({
+      label: 'Remise globale',
+      formula: `${toNumber(quotation.globalDiscountValue)}`,
+      result: toNumber(totals.globalDiscountTotal),
+    });
+  } else {
+    totalRows.push({ label: 'Remise globale', formula: '0', result: 0 });
+  }
+
+  const lineTotalsRow = totalsStart;
+  const lineDiscountRow = totalsStart + 1;
+  const globalDiscountRow = totalsStart + 2;
+  const netRow = totalsStart + 3;
+  const taxRow = totalsStart + 4;
+  const totalRow = totalsStart + 5;
+
+  totalRows.push({
+    label: 'Total HT',
+    formula: `H${lineTotalsRow}-H${globalDiscountRow}`,
+    result: toNumber(totals.netBeforeTax),
+  });
+  totalRows.push({ label: 'TVA', formula: `SUM(${taxRange})`, result: toNumber(totals.taxTotal) });
+  totalRows.push({
+    label: 'TOTAL TTC',
+    formula: `H${netRow}+H${taxRow}`,
+    result: toNumber(totals.total),
+    emphasis: true,
+  });
+
+  // Bloc de totaux : libellé fusionné F:G, valeur fusionnée H:J — chaque ligne
+  // de total est ainsi référençable par sa cellule de valeur (colonne H).
+  const addTotalRow = (rowNumber: number, row: TotalRow) => {
+    sheet.mergeCells(`F${rowNumber}:G${rowNumber}`);
+    const labelCell = sheet.getCell(`F${rowNumber}`);
+    labelCell.value = row.label;
+    labelCell.font = {
+      size: 9,
+      bold: row.emphasis,
+      color: { argb: `FF${row.emphasis ? hex(style.colors.headerText) : hex(style.colors.muted)}` },
+    };
+    labelCell.alignment = { vertical: 'middle', horizontal: 'right', indent: 1 };
+
+    sheet.mergeCells(`H${rowNumber}:${lastColumn}${rowNumber}`);
+    const valueCell = sheet.getCell(`H${rowNumber}`);
+    valueCell.value = { formula: row.formula, result: row.result };
+    valueCell.numFmt = moneyFormat;
+    valueCell.font = {
+      size: row.emphasis ? 11 : 9,
+      bold: true,
+      color: { argb: `FF${row.emphasis ? hex(style.colors.headerText) : hex(style.colors.text)}` },
+    };
+    valueCell.alignment = { vertical: 'middle', horizontal: 'right', indent: 1 };
+
+    if (row.emphasis) {
+      for (const reference of [`F${rowNumber}`, `H${rowNumber}`]) {
+        sheet.getCell(reference).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${hex(style.colors.primary)}` } };
+      }
+      sheet.getRow(rowNumber).height = 24;
     }
-    cursorRow += 1;
   };
 
-  addTotal('Sous-total', toAmountNumber(totals.subtotal), { formula: `SUM(H${firstItemRow}:H${lastItemRow})` });
-  if (Number(totals.lineDiscountTotal) > 0) {
-    addTotal('Remises sur lignes', -toAmountNumber(totals.lineDiscountTotal));
-  }
-  if (Number(totals.globalDiscountTotal) > 0) {
-    addTotal('Remise globale', -toAmountNumber(totals.globalDiscountTotal));
-  }
-  // Base imposable = somme des nets de lignes moins la remise globale (formule Excel vivante).
-  const netRow = cursorRow;
-  addTotal('Total HT', toAmountNumber(totals.netBeforeTax), {
-    formula: `SUM(H${firstItemRow}:H${lastItemRow})-${toAmountNumber(totals.globalDiscountTotal)}`,
-  });
+  totalRows.forEach((row, index) => addTotalRow(totalsStart + index, row));
 
-  addTotal('TVA', toAmountNumber(totals.taxTotal), { formula: `SUM(J${firstItemRow}:J${lastItemRow})` });
-  addTotal('TOTAL TTC', toAmountNumber(totals.total), { highlight: true, formula: `K${netRow}+K${netRow + 1}` });
-  if (Number(totals.depositAmount) > 0) {
-    const depositRow = cursorRow;
-    addTotal('Acompte à la commande', toAmountNumber(totals.depositAmount));
-    addTotal('Reste à payer', toAmountNumber(totals.amountDue), { bold: true, formula: `K${depositRow - 2}-K${depositRow}` });
-  }
-
-  // --- Conditions --------------------------------------------------------
-  const conditions: [string, string][] = [];
-  if (style.visibility.terms) {
-    if (terms.validityPeriod) conditions.push(['Validité du devis', terms.validityPeriod]);
-    if (terms.paymentTerms) conditions.push(['Conditions de paiement', terms.paymentTerms]);
-    if (terms.deliveryTime) conditions.push(['Délai de livraison', terms.deliveryTime]);
-    if (terms.warranty) conditions.push(['Garantie', terms.warranty]);
-    if (terms.specialConditions) conditions.push(['Conditions particulières', terms.specialConditions]);
-    if (terms.legalMentions) conditions.push(['Mentions légales', terms.legalMentions]);
-    (terms.blocks ?? []).forEach((block) => conditions.push([block.label, block.content]));
-  }
-  if (style.visibility.bankDetails && company?.bankDetails) conditions.push(['Coordonnées bancaires', company.bankDetails]);
-  if (style.visibility.paymentInfo && company?.paymentInfo) conditions.push(['Modalités de règlement', company.paymentInfo]);
-  if (style.visibility.notes && (quotation.notes || terms.notes)) conditions.push(['Notes', quotation.notes ?? terms.notes ?? '']);
-
-  if (conditions.length > 0) {
-    cursorRow += 1;
-    sheet.mergeCells(`A${cursorRow}:${lastColumn}${cursorRow}`);
-    const sectionCell = sheet.getCell(`A${cursorRow}`);
-    sectionCell.value = 'CONDITIONS ET INFORMATIONS';
-    sectionCell.font = { bold: true, size: 9, color: { argb: argb(style.colors.muted) } };
-    cursorRow += 1;
-    conditions.forEach(([label, value]) => {
-      sheet.mergeCells(`A${cursorRow}:${lastColumn}${cursorRow}`);
-      const cell = sheet.getCell(`A${cursorRow}`);
-      cell.value = `${label} : ${value}`;
-      cell.font = { size: 9 };
-      cell.alignment = { wrapText: true, vertical: 'top' };
-      sheet.getRow(cursorRow).height = Math.max(14, Math.ceil(value.length / 150) * 14);
-      cursorRow += 1;
+  // Acompte et reste à payer (le cas échéant).
+  let nextRow = totalRow + 1;
+  if (toNumber(totals.depositAmount) > 0) {
+    addTotalRow(nextRow, {
+      label: 'Acompte à la commande',
+      formula: `${toNumber(totals.depositAmount)}`,
+      result: toNumber(totals.depositAmount),
     });
+    nextRow += 1;
+    addTotalRow(nextRow, {
+      label: 'Reste à payer',
+      formula: `H${totalRow}-H${nextRow - 1}`,
+      result: toNumber(totals.amountDue),
+      emphasis: true,
+    });
+    nextRow += 1;
   }
 
-  // Pied de page d'impression
-  sheet.headerFooter.oddFooter = `&L${company?.name ?? 'MON DEVIS'}&CDevis ${quotation.number}&RPage &P / &N`;
-  sheet.headerFooter.oddHeader = `&L${company?.name ?? ''}&R${dateFr(quotation.issueDate)}`;
+  const noteCell = sheet.getCell(`A${nextRow + 1}`);
+  noteCell.value = `Montants exprimés en ${currency}. Les totaux sont des formules : modifiez une quantité, un prix ou un taux pour les recalculer.`;
+  noteCell.font = { size: 8, italic: true, color: { argb: `FF${hex(style.colors.muted)}` } };
+  sheet.mergeCells(`A${nextRow + 1}:${lastColumn}${nextRow + 1}`);
 
-  // --- Feuille « Synthèse » ---------------------------------------------
-  const summary = workbook.addWorksheet('Synthèse', {
-    views: [{ showGridLines: false }],
-    pageSetup: { paperSize: 9, orientation: 'portrait', fitToPage: true, fitToWidth: 1 },
-  });
-  summary.columns = [{ width: 32 }, { width: 30 }];
-  summary.addRow(['Synthèse du devis', '']);
-  summary.getCell('A1').font = { bold: true, size: 14, color: { argb: argb(style.colors.primary) } };
-  const summaryRows: [string, string | number][] = [
-    ['Numéro', quotation.number],
-    ['Intitulé', quotation.title],
-    ['Statut', quotation.status],
-    ['Client', customer?.companyName || customer?.name || '—'],
+  /* --- Impression ------------------------------------------------------- */
+
+  sheet.pageSetup.printTitlesRow = `${headerRowIndex}:${headerRowIndex}`;
+  sheet.pageSetup.printArea = `A1:${lastColumn}${nextRow + 2}`;
+  sheet.headerFooter = {
+    oddHeader: `&L&"Arial,Bold"${company?.name ?? 'MON DEVIS'}&RDevis ${quotation.number}`,
+    oddFooter: `&L${dateFr(quotation.issueDate)} — ${currency}&CPage &P / &N`,
+  };
+
+  /* --- Feuille « Synthèse » --------------------------------------------- */
+
+  const summary = workbook.addWorksheet('Synthèse');
+  summary.columns = [{ width: 30 }, { width: 90 }];
+  summary.mergeCells('A1:B1');
+  const summaryTitle = summary.getCell('A1');
+  summaryTitle.value = `Devis ${quotation.number} — synthèse, conditions et mentions`;
+  summaryTitle.font = { size: 12, bold: true, color: { argb: `FF${hex(style.colors.primary)}` } };
+
+  const summaryRows: [string, string][] = [
+    ['Émetteur', company?.name ?? '—'],
+    ['Client', customer ? customer.companyName || customer.name : '—'],
+    ['Objet', quotation.title ?? 'Devis'],
+    ['Statut', STATUS_LABELS[quotation.status] ?? quotation.status],
     ['Date d’émission', dateFr(quotation.issueDate)],
-    ['Valable jusqu’au', dateFr(quotation.validUntil)],
+    ['Valable jusqu’au', style.visibility.validityDate ? dateFr(quotation.validUntil) : '—'],
     ['Devise', currency],
-    ['Nombre de lignes', items.length],
-    ['Total HT', toAmountNumber(totals.netBeforeTax)],
-    ['TVA', toAmountNumber(totals.taxTotal)],
-    ['Total TTC', toAmountNumber(totals.total)],
-    ['Acompte', toAmountNumber(totals.depositAmount)],
-    ['Reste à payer', toAmountNumber(totals.amountDue)],
+    ['Prix saisis', quotation.pricesIncludeTax ? 'TTC' : 'HT'],
+    ['Modèle', `${style.name} (${style.key})`],
+    ['Total HT', `${toNumber(totals.netBeforeTax).toLocaleString('fr-FR')} ${currency}`],
+    ['TVA', `${toNumber(totals.taxTotal).toLocaleString('fr-FR')} ${currency}`],
+    ['Total TTC', `${toNumber(totals.total).toLocaleString('fr-FR')} ${currency}`],
+    ['Validité du devis', terms.validityPeriod ?? '—'],
+    ['Conditions de paiement', terms.paymentTerms ?? '—'],
+    ['Délai de livraison / exécution', terms.deliveryTime ?? '—'],
+    ['Garantie', terms.warranty ?? '—'],
+    ['Conditions particulières', terms.specialConditions ?? '—'],
+    ['Modalités de règlement', terms.paymentInstructions ?? '—'],
+    ['Coordonnées bancaires', company?.bankDetails ?? '—'],
+    ['Notes', terms.notes ?? '—'],
+    ['Mentions légales', terms.legalMentions ?? company?.legalInfo ?? '—'],
+    ...(terms.blocks ?? []).map((block) => [block.label, block.content] as [string, string]),
   ];
+
   summaryRows.forEach(([label, value], index) => {
-    const row = summary.addRow([label, value]);
-    row.getCell(1).font = { bold: true, size: 10 };
-    if (typeof value === 'number') row.getCell(2).numFmt = numFmt;
-    if (index === summaryRows.length - 1) {
-      row.font = { bold: true };
-    }
+    const rowNumber = 3 + index;
+    const labelCell = summary.getCell(`A${rowNumber}`);
+    labelCell.value = label;
+    labelCell.font = { size: 9, bold: true, color: { argb: `FF${hex(style.colors.muted)}` } };
+    labelCell.alignment = { vertical: 'top' };
+
+    const valueCell = summary.getCell(`B${rowNumber}`);
+    valueCell.value = value && value.trim() ? value : '—';
+    valueCell.font = { size: 9 };
+    valueCell.alignment = { vertical: 'top', wrapText: true };
+    summary.getRow(rowNumber).height = Math.max(16, Math.ceil(String(value ?? '').length / 95) * 14);
   });
-  summary.addRow([]);
-  summary.addRow(['Document généré par MON DEVIS', new Date().toISOString()]);
-  summary.getCell(`A${summary.rowCount}`).font = { size: 8, color: { argb: argb('#94A3B8') } };
+
+  summary.pageSetup = { paperSize: 9, orientation: 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
 
   const buffer = await workbook.xlsx.writeBuffer();
-  return Buffer.from(buffer);
+  return Buffer.from(buffer as ArrayBuffer);
 }
