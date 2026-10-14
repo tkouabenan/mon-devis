@@ -56,9 +56,29 @@ function checkStorage(): CheckResult {
 }
 
 function checkAuth(): CheckResult {
-  return env.isProduction
-    ? { status: 'ok', message: 'AUTH_SECRET configuré' }
-    : { status: 'warning', message: 'AUTH_SECRET de développement : à remplacer avant mise en production' };
+  // Lecture directe de la variable : `env.authSecret` lève une exception en
+  // production, or la sonde doit rapporter l'état réel sans faire tomber la route.
+  const secret = (process.env.AUTH_SECRET ?? '').trim();
+
+  if (!secret) {
+    return env.isProduction
+      ? {
+          status: 'error',
+          message:
+            "AUTH_SECRET est absent : les sessions, les jetons de partage et les liens de réinitialisation ne peuvent pas être signés. " +
+            'Générez un secret avec `openssl rand -base64 48`, ajoutez-le aux variables d’environnement, puis redéployez.',
+        }
+      : { status: 'warning', message: 'AUTH_SECRET de développement : à remplacer avant mise en production' };
+  }
+
+  if (secret.length < 32) {
+    return {
+      status: env.isProduction ? 'error' : 'warning',
+      message: `AUTH_SECRET ne fait que ${secret.length} caractères (32 minimum). Régénérez-le avant d’exposer l’application.`,
+    };
+  }
+
+  return { status: 'ok', message: 'AUTH_SECRET configuré (32 caractères ou plus)' };
 }
 
 function checkPayments(): CheckResult {

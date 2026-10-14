@@ -116,6 +116,8 @@ Copiez `.env.example` vers `.env` et adaptez. **Rien n'est obligatoire en dével
 | `AUTH_SECRET` | Secret de signature des sessions, **32 caractères minimum**. Obligatoire en production (`openssl rand -base64 48`) |
 | `NEXT_PUBLIC_APP_URL` | URL publique de l'application. Sert aux liens de partage des devis et aux e-mails |
 
+> **Build et exécution.** Le `next build` ne lit **aucun** secret d'exécution : il réussit sans `DATABASE_URL` ni `AUTH_SECRET`, ce qui permet de construire l'application sur un hébergeur qui ne les expose pas au build (Vercel). En revanche, l'application **exige** ces deux variables à l'exécution : sans elles, `/api/health` répond `503` en nommant la variable manquante. Après avoir ajouté une variable sur Vercel, **redéployez** pour qu'elle soit prise en compte.
+
 ### Recommandées
 
 | Variable | Description |
@@ -215,7 +217,7 @@ Placez l'application derrière un reverse proxy HTTPS (Nginx, Caddy) et définis
 - [ ] `STORAGE_DRIVER=s3` si l'hébergement est serverless
 - [ ] `EMAIL_DRIVER` configuré (sinon aucun e-mail ne part — c'est volontaire, mais à savoir)
 - [ ] Les comptes de démonstration du seed ne sont pas présents en production
-- [ ] `/api/health` ne renvoie plus de `warning` critique
+- [ ] `/api/health` répond `200` (aucun `error` : base joignable, migrations appliquées, `AUTH_SECRET` présent)
 - [ ] Sauvegardes automatiques de la base activées chez l'hébergeur
 
 ---

@@ -25,26 +25,34 @@ export const env = {
   isProduction,
   isDevelopment: !isProduction,
 
-  databaseUrl: (() => {
+  /**
+   * Chaîne de connexion PostgreSQL. Évaluée **à l'accès** et non à l'import :
+   * un `next build` ne doit jamais échouer faute de secrets d'exécution
+   * (les variables d'environnement de production ne sont pas exposées au build
+   * sur Vercel). L'erreur, explicite, surgit au premier accès réel.
+   */
+  get databaseUrl(): string {
     const url = optional('DATABASE_URL');
     if (!url && isProduction) {
-      // En production, une base manquante doit échouer immédiatement et clairement
-      // plutôt que de laisser l'application tenter une connexion locale inexistante.
       throw new Error(
         "DATABASE_URL est obligatoire en production. Renseignez la chaîne de connexion de votre PostgreSQL managé " +
-          '(Neon, Supabase, Vercel Postgres, Railway…), puis relancez le déploiement.',
+          '(Neon, Supabase, Vercel Postgres, Railway…) dans les variables d\'environnement de votre hébergeur, puis redéployez.',
       );
     }
     return url;
-  })(),
+  },
 
-  authSecret: (() => {
+  /** Secret de signature des jetons, évalué à l'accès (cf. `databaseUrl`). */
+  get authSecret(): string {
     const secret = optional('AUTH_SECRET');
     if (!secret && isProduction) {
-      throw new Error("AUTH_SECRET est obligatoire en production (32 caractères minimum).");
+      throw new Error(
+        "AUTH_SECRET est obligatoire en production (32 caractères minimum). Générez-le avec `openssl rand -base64 48`, " +
+          "ajoutez-le aux variables d'environnement de votre hébergeur, puis redéployez.",
+      );
     }
     return secret || 'mon-devis-developpement-secret-non-configure';
-  })(),
+  },
 
   appName: optional('APP_NAME', 'MON DEVIS'),
   appUrl: optional('NEXT_PUBLIC_APP_URL', 'http://localhost:3000').replace(/\/$/, ''),
