@@ -68,7 +68,7 @@ export async function renderQuotationXlsx(data: QuotationDocumentData): Promise<
       fitToHeight: 0,
       margins: { left: 0.5, right: 0.5, top: 0.6, bottom: 0.6, header: 0.3, footer: 0.3 },
       horizontalCentered: true,
-      printTitlesRow: '10:10',
+      printTitlesRow: '14:14',
     },
     views: [{ showGridLines: false }],
   });
@@ -134,9 +134,6 @@ export async function renderQuotationXlsx(data: QuotationDocumentData): Promise<
   sheet.getCell(metaLeft, 3).value = 'DEVIS';
   sheet.getCell(metaLeft, 3).font = { bold: true, size: 10, color: { argb: argb(style.colors.muted) } };
   metaRows.forEach(([label, value], index) => {
-    const row = sheet.getRow(metaLeft + index);
-    sheet.getCell(metaLeft, 4 + index * 0).value = label;
-    void row;
     sheet.getCell(`G${4 + index}`).value = label;
     sheet.getCell(`G${4 + index}`).font = { size: 9, color: { argb: argb(style.colors.muted) } };
     sheet.getCell(`I${4 + index}`).value = value;
