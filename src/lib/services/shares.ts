@@ -339,11 +339,12 @@ export async function recordDecision(input: RecordDecisionInput): Promise<Decisi
 
 /** Historique complet des décisions et consultations d'un devis. */
 export async function listApprovalEvents(organizationId: string, quotationId: string) {
-  return db
-    .select()
+  const rows = await db
+    .select({ event: quotationApprovalEvents })
     .from(quotationApprovalEvents)
     .innerJoin(quotations, eq(quotationApprovalEvents.quotationId, quotations.id))
     .where(and(eq(quotations.organizationId, organizationId), eq(quotationApprovalEvents.quotationId, quotationId)))
     .orderBy(desc(quotationApprovalEvents.createdAt))
     .limit(50);
+  return rows.map((row) => row.event);
 }

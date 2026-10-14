@@ -7,6 +7,7 @@ import {
   LayoutDashboard,
   LifeBuoy,
   Package,
+  Receipt,
   Settings,
   Users,
   type LucideIcon,
@@ -48,6 +49,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { href: '/devis/nouveau', label: 'Nouveau devis', icon: FilePlus2, match: ['/devis/nouveau'] },
       { href: '/clients', label: 'Clients', icon: Users, match: ['/clients'] },
       { href: '/produits', label: 'Produits & Services', icon: Package, match: ['/produits'] },
+      { href: '/factures', label: 'Factures', icon: Receipt, match: ['/factures'] },
     ],
   },
   {
@@ -73,6 +75,7 @@ export function labelForPath(pathname: string): string {
   const known: Record<string, string> = {
     devis: 'Devis',
     clients: 'Clients',
+    factures: 'Factures',
     produits: 'Produits & Services',
     parametres: 'Paramètres',
     statistiques: 'Statistiques',

@@ -90,7 +90,7 @@ function baseText(
 }
 
 export async function renderQuotationDocx(data: QuotationDocumentData): Promise<Buffer> {
-  const { quotation, items, company, customer, terms, style, totals } = data;
+  const { quotation, items, company, customer, terms, style, totals, labels } = data;
   const currency = quotation.currency;
 
   /* --- En-tête de section (logo + entreprise) --------------------------- */
@@ -144,8 +144,8 @@ export async function renderQuotationDocx(data: QuotationDocumentData): Promise<
       heading: HeadingLevel.HEADING_1,
       spacing: { after: 80 },
       children: [
-        baseText('DEVIS', style, { bold: true, size: style.typography.titleSize + 4, color: style.colors.primary, heading: true }),
-        ...(quotation.title && quotation.title.trim() && quotation.title.trim() !== 'Devis'
+        baseText(labels.badge, style, { bold: true, size: style.typography.titleSize + 4, color: style.colors.primary, heading: true }),
+        ...(quotation.title && quotation.title.trim() && quotation.title.trim() !== labels.documentTitle
           ? [baseText(`  —  ${quotation.title.trim()}`, style, { size: style.typography.baseSize + 2, color: style.colors.text })]
           : []),
       ],
@@ -192,9 +192,11 @@ export async function renderQuotationDocx(data: QuotationDocumentData): Promise<
     ['Numéro', quotation.number],
     ['Date d’émission', dateFr(quotation.issueDate)],
   ];
-  if (style.visibility.validityDate) metaRows.push(['Valable jusqu’au', dateFr(quotation.validUntil)]);
+  if (style.visibility.validityDate) metaRows.push([labels.validityLabel, dateFr(quotation.validUntil)]);
   metaRows.push(['Devise', currency]);
   if (quotation.customerReference) metaRows.push(['Votre référence', quotation.customerReference]);
+  if (quotation.status) metaRows.push(['Statut', labels.statusLabel(quotation.status)]);
+  for (const [label, value] of data.metaRows) metaRows.push([label, value]);
 
   for (const [label, value] of metaRows) {
     infoRight.push(
@@ -396,6 +398,9 @@ export async function renderQuotationDocx(data: QuotationDocumentData): Promise<
     totalRows.push({ label: 'Acompte à la commande', value: money(totals.depositAmount, currency) });
     totalRows.push({ label: 'Reste à payer', value: money(totals.amountDue, currency), emphasis: true });
   }
+  for (const row of data.totalRows) {
+    totalRows.push({ label: row.label, value: money(row.amount, currency), emphasis: row.emphasis });
+  }
 
   body.push(
     new Table({
@@ -484,13 +489,14 @@ export async function renderQuotationDocx(data: QuotationDocumentData): Promise<
   };
 
   if (style.visibility.terms) {
-    section('Validité du devis', terms.validityPeriod);
+    section(labels.validitySection, terms.validityPeriod);
     section('Conditions de paiement', terms.paymentTerms);
     section('Délai de livraison / exécution', terms.deliveryTime);
     section('Garantie', terms.warranty);
     section('Conditions particulières', terms.specialConditions);
     for (const block of terms.blocks ?? []) section(block.label, block.content);
   }
+  for (const extra of data.extraSections) section(extra.title, extra.body);
   if (style.visibility.notes) section('Notes', terms.notes);
   if (style.visibility.paymentInfo) section('Modalités de règlement', terms.paymentInstructions);
   if (style.visibility.bankDetails) section('Coordonnées bancaires', company?.bankDetails ?? null);
@@ -579,8 +585,8 @@ export async function renderQuotationDocx(data: QuotationDocumentData): Promise<
 
   const document = new Document({
     creator: 'MON DEVIS',
-    title: `Devis ${quotation.number}`,
-    description: `Devis ${quotation.number} — ${company?.name ?? ''}`,
+    title: `${labels.documentTitle} ${quotation.number}`,
+    description: `${labels.documentTitle} ${quotation.number} — ${company?.name ?? ''}`,
     sections: [
       {
         properties: {
@@ -610,7 +616,7 @@ export async function renderQuotationDocx(data: QuotationDocumentData): Promise<
                 alignment: AlignmentType.RIGHT,
                 children: [
                   baseText(
-                    `${company?.name ?? 'MON DEVIS'} — Devis ${quotation.number}`,
+                    `${company?.name ?? 'MON DEVIS'} — ${labels.documentTitle} ${quotation.number}`,
                     style,
                     { size: style.typography.baseSize - 4, color: style.colors.muted },
                   ),

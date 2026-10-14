@@ -54,6 +54,91 @@ export interface QuotationTerms {
   blocks?: { id: string; label: string; content: string }[];
 }
 
+/* -------------------------------------------------------------------------- */
+/* Étiquettes de document (devis ou facture)                                  */
+/* -------------------------------------------------------------------------- */
+
+export type DocumentKind = 'QUOTATION' | 'INVOICE';
+
+/**
+ * Libellés du document : le même moteur de rendu produit devis et factures.
+ * Les générateurs PDF/DOCX/XLSX ne contiennent donc aucune mention « Devis »
+ * codée en dur : tout passe par ces étiquettes.
+ */
+export interface DocumentLabels {
+  kind: DocumentKind;
+  /** Nom du type de document : « Devis », « Facture ». */
+  documentTitle: string;
+  /** Titre affiché en grand dans l'en-tête : « DEVIS », « FACTURE ». */
+  badge: string;
+  /** Nom de la feuille de calcul (« Devis », « Facture »). */
+  sheetName: string;
+  /** Libellé de la date limite : « Valable jusqu'au », « Échéance ». */
+  validityLabel: string;
+  /** Titre de la section de validité (devis). */
+  validitySection: string;
+  /** Mention de signature. */
+  signatureLabel: string;
+  /** Conversion du statut technique en libellé français. */
+  statusLabel: (status: string) => string;
+}
+
+const QUOTATION_STATUS_LABELS: Record<string, string> = {
+  DRAFT: 'Brouillon',
+  SENT: 'Envoyé',
+  PENDING: 'En attente',
+  ACCEPTED: 'Accepté',
+  REJECTED: 'Refusé',
+  EXPIRED: 'Expiré',
+  CANCELLED: 'Annulé',
+};
+
+const INVOICE_STATUS_LABELS: Record<string, string> = {
+  DRAFT: 'Brouillon',
+  SENT: 'Envoyée',
+  PARTIALLY_PAID: 'Partiellement payée',
+  PAID: 'Payée',
+  OVERDUE: 'En retard',
+  CANCELLED: 'Annulée',
+};
+
+export const DOCUMENT_LABELS: Record<DocumentKind, DocumentLabels> = {
+  QUOTATION: {
+    kind: 'QUOTATION',
+    documentTitle: 'Devis',
+    badge: 'DEVIS',
+    sheetName: 'Devis',
+    validityLabel: 'Valable jusqu’au',
+    validitySection: 'Validité du devis',
+    signatureLabel: 'Bon pour accord — signature du client',
+    statusLabel: (status) => QUOTATION_STATUS_LABELS[status] ?? status,
+  },
+  INVOICE: {
+    kind: 'INVOICE',
+    documentTitle: 'Facture',
+    badge: 'FACTURE',
+    sheetName: 'Facture',
+    validityLabel: 'Échéance',
+    validitySection: 'Conditions de règlement',
+    signatureLabel: 'Signature et cachet',
+    statusLabel: (status) => INVOICE_STATUS_LABELS[status] ?? status,
+  },
+};
+
+/** Ligne de total complémentaire (acompte, règlements, solde dû…). */
+export interface DocumentTotalRow {
+  label: string;
+  amount: number;
+  emphasis?: boolean;
+  muted?: boolean;
+}
+
+/** Section de texte additionnelle (conditions spécifiques, règlements…). */
+export interface DocumentSection {
+  title: string;
+  body: string;
+}
+
 export interface QuotationDocumentData {
   quotation: Quotation;
   items: QuotationItem[];
@@ -66,6 +151,16 @@ export interface QuotationDocumentData {
   watermark: boolean;
   /** Logo encodé en base64 pour les générateurs PDF/DOCX. */
   logoDataUri: string | null;
+  /** Type de document : le même moteur sert les devis et les factures. */
+  kind: DocumentKind;
+  /** Libellés français dépendant du type de document. */
+  labels: DocumentLabels;
+  /** Lignes de méta supplémentaires (n° de devis d'origine, solde…). */
+  metaRows: [string, string][];
+  /** Lignes de totaux supplémentaires (règlements, solde dû). */
+  totalRows: DocumentTotalRow[];
+  /** Sections de texte supplémentaires. */
+  extraSections: DocumentSection[];
 }
 
 /**
@@ -79,6 +174,11 @@ export function buildDocumentData(params: {
   style?: TemplateStyle;
   watermark?: boolean;
   logoDataUri?: string | null;
+  kind?: DocumentKind;
+  labels?: DocumentLabels;
+  metaRows?: [string, string][];
+  totalRows?: DocumentTotalRow[];
+  extraSections?: DocumentSection[];
 }): QuotationDocumentData {
   const { quotation, items } = params;
   const totals = calculateQuotation({
@@ -109,6 +209,14 @@ export function buildDocumentData(params: {
     totals,
     watermark: params.watermark ?? false,
     logoDataUri: params.logoDataUri ?? null,
+    kind: params.kind ?? 'QUOTATION',
+    labels: params.labels ?? DOCUMENT_LABELS[params.kind ?? 'QUOTATION'],
+    metaRows: params.metaRows ?? [],
+    totalRows: params.totalRows ?? [],
+    extraSections: params.extraSections ?? [],
   };
 }
+
+/** Alias sémantique : le même conteneur de données sert devis et factures. */
+export type BusinessDocumentData = QuotationDocumentData;
 

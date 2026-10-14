@@ -67,7 +67,7 @@ const STATUS_LABELS: Record<string, string> = {
 const THIN = (color: string) => ({ style: 'thin' as const, color: { argb: `FF${hex(color)}` } });
 
 export async function renderQuotationXlsx(data: QuotationDocumentData): Promise<Buffer> {
-  const { quotation, items, company, customer, terms, style, totals } = data;
+  const { quotation, items, company, customer, terms, style, totals, labels } = data;
   const currency = quotation.currency;
   const moneyFormat = numberFormat(currency);
 
@@ -76,11 +76,11 @@ export async function renderQuotationXlsx(data: QuotationDocumentData): Promise<
   workbook.lastModifiedBy = 'MON DEVIS';
   workbook.created = new Date();
   workbook.modified = new Date();
-  workbook.title = `Devis ${quotation.number}`;
-  workbook.subject = quotation.title ?? 'Devis';
+  workbook.title = `${labels.documentTitle} ${quotation.number}`;
+  workbook.subject = quotation.title ?? labels.documentTitle;
   workbook.company = company?.name ?? 'MON DEVIS';
 
-  const sheet = workbook.addWorksheet('Devis', {
+  const sheet = workbook.addWorksheet(labels.sheetName, {
     pageSetup: {
       paperSize: 9, // A4
       orientation: 'portrait',
@@ -123,7 +123,7 @@ export async function renderQuotationXlsx(data: QuotationDocumentData): Promise<
 
   sheet.mergeCells(`A1:${lastColumn}1`);
   const titleCell = sheet.getCell('A1');
-  titleCell.value = `${company?.name ?? 'MON DEVIS'} — DEVIS ${quotation.number}`;
+  titleCell.value = `${company?.name ?? 'MON DEVIS'} — ${labels.badge} ${quotation.number}`;
   titleCell.font = { size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
   titleCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
   titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${hex(style.colors.primary)}` } };
@@ -132,10 +132,10 @@ export async function renderQuotationXlsx(data: QuotationDocumentData): Promise<
   sheet.mergeCells(`A2:${lastColumn}2`);
   const subtitleCell = sheet.getCell('A2');
   subtitleCell.value = [
-    quotation.title && quotation.title.trim() ? quotation.title.trim() : 'Devis',
+    quotation.title && quotation.title.trim() ? quotation.title.trim() : labels.documentTitle,
     `Émis le ${dateFr(quotation.issueDate)}`,
-    style.visibility.validityDate && quotation.validUntil ? `Valable jusqu'au ${dateFr(quotation.validUntil)}` : null,
-    `Statut : ${STATUS_LABELS[quotation.status] ?? quotation.status}`,
+    style.visibility.validityDate && quotation.validUntil ? `${labels.validityLabel} ${dateFr(quotation.validUntil)}` : null,
+    `Statut : ${labels.statusLabel(quotation.status)}`,
   ]
     .filter(Boolean)
     .join('   •   ');
@@ -203,10 +203,11 @@ export async function renderQuotationXlsx(data: QuotationDocumentData): Promise<
   const meta: [string, string][] = [
     ['Numéro', quotation.number],
     ['Date d’émission', dateFr(quotation.issueDate)],
-    ['Validité', style.visibility.validityDate ? dateFr(quotation.validUntil) : '—'],
+    [labels.validityLabel, style.visibility.validityDate ? dateFr(quotation.validUntil) : '—'],
     ['Devise', currency],
     ['Référence', quotation.reference ?? '—'],
     ['Référence client', quotation.customerReference ?? '—'],
+    ...data.metaRows,
   ];
   meta.forEach(([label, value], index) => {
     const rowNumber = metaStart + index;
@@ -423,6 +424,16 @@ export async function renderQuotationXlsx(data: QuotationDocumentData): Promise<
     nextRow += 1;
   }
 
+  for (const row of data.totalRows) {
+    addTotalRow(nextRow, {
+      label: row.label,
+      formula: `${row.amount}`,
+      result: row.amount,
+      emphasis: row.emphasis,
+    });
+    nextRow += 1;
+  }
+
   const noteCell = sheet.getCell(`A${nextRow + 1}`);
   noteCell.value = `Montants exprimés en ${currency}. Les totaux sont des formules : modifiez une quantité, un prix ou un taux pour les recalculer.`;
   noteCell.font = { size: 8, italic: true, color: { argb: `FF${hex(style.colors.muted)}` } };
@@ -433,7 +444,7 @@ export async function renderQuotationXlsx(data: QuotationDocumentData): Promise<
   sheet.pageSetup.printTitlesRow = `${headerRowIndex}:${headerRowIndex}`;
   sheet.pageSetup.printArea = `A1:${lastColumn}${nextRow + 2}`;
   sheet.headerFooter = {
-    oddHeader: `&L&"Arial,Bold"${company?.name ?? 'MON DEVIS'}&RDevis ${quotation.number}`,
+    oddHeader: `&L&"Arial,Bold"${company?.name ?? 'MON DEVIS'}&R${labels.documentTitle} ${quotation.number}`,
     oddFooter: `&L${dateFr(quotation.issueDate)} — ${currency}&CPage &P / &N`,
   };
 
@@ -443,23 +454,25 @@ export async function renderQuotationXlsx(data: QuotationDocumentData): Promise<
   summary.columns = [{ width: 30 }, { width: 90 }];
   summary.mergeCells('A1:B1');
   const summaryTitle = summary.getCell('A1');
-  summaryTitle.value = `Devis ${quotation.number} — synthèse, conditions et mentions`;
+  summaryTitle.value = `${labels.documentTitle} ${quotation.number} — synthèse, conditions et mentions`;
   summaryTitle.font = { size: 12, bold: true, color: { argb: `FF${hex(style.colors.primary)}` } };
 
   const summaryRows: [string, string][] = [
     ['Émetteur', company?.name ?? '—'],
     ['Client', customer ? customer.companyName || customer.name : '—'],
-    ['Objet', quotation.title ?? 'Devis'],
-    ['Statut', STATUS_LABELS[quotation.status] ?? quotation.status],
+    ['Objet', quotation.title ?? labels.documentTitle],
+    ['Statut', labels.statusLabel(quotation.status)],
     ['Date d’émission', dateFr(quotation.issueDate)],
-    ['Valable jusqu’au', style.visibility.validityDate ? dateFr(quotation.validUntil) : '—'],
+    [labels.validityLabel, style.visibility.validityDate ? dateFr(quotation.validUntil) : '—'],
     ['Devise', currency],
     ['Prix saisis', quotation.pricesIncludeTax ? 'TTC' : 'HT'],
     ['Modèle', `${style.name} (${style.key})`],
     ['Total HT', `${toNumber(totals.netBeforeTax).toLocaleString('fr-FR')} ${currency}`],
     ['TVA', `${toNumber(totals.taxTotal).toLocaleString('fr-FR')} ${currency}`],
     ['Total TTC', `${toNumber(totals.total).toLocaleString('fr-FR')} ${currency}`],
-    ['Validité du devis', terms.validityPeriod ?? '—'],
+    ...data.totalRows.map((row) => [row.label, `${row.amount.toLocaleString('fr-FR')} ${currency}`] as [string, string]),
+    ...data.extraSections.map((section) => [section.title, section.body] as [string, string]),
+    [labels.validitySection, terms.validityPeriod ?? '—'],
     ['Conditions de paiement', terms.paymentTerms ?? '—'],
     ['Délai de livraison / exécution', terms.deliveryTime ?? '—'],
     ['Garantie', terms.warranty ?? '—'],

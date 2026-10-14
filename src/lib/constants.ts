@@ -1,4 +1,4 @@
-import type { QuotationStatus } from '@/db/schema';
+import type { InvoiceStatus, QuotationStatus } from '@/db/schema';
 
 /** Statuts de devis : libellés français, couleurs et transitions autorisées. */
 export interface StatusDefinition {
@@ -282,6 +282,10 @@ export const NOTIFICATION_TYPE_LABELS: Record<string, string> = {
   QUOTATION_REJECTED: 'Devis refusé',
   QUOTATION_EXPIRING: 'Devis bientôt expiré',
   QUOTATION_EXPIRED: 'Devis expiré',
+  INVOICE_CREATED: 'Facture créée',
+  INVOICE_PAID: 'Facture payée',
+  INVOICE_OVERDUE: 'Facture en retard',
+  PAYMENT_RECEIVED: 'Règlement enregistré',
   EXPORT_READY: 'Export disponible',
   SUBSCRIPTION_UPDATE: 'Abonnement',
   ACCOUNT_EVENT: 'Compte',
@@ -328,3 +332,98 @@ export const TERMS_PRESETS = [
       "Entreprise immatriculée au Registre du Commerce et du Crédit Mobilier (RCCM) de Côte d'Ivoire. TVA appliquée conformément au Code général des impôts ivoirien. Tout litige relatif au présent devis relève de la compétence des tribunaux d'Abidjan.",
   },
 ];
+
+/* -------------------------------------------------------------------------- */
+/* Factures                                                                   */
+/* -------------------------------------------------------------------------- */
+
+export interface InvoiceStatusDefinition {
+  value: InvoiceStatus;
+  label: string;
+  description: string;
+  badgeClass: string;
+  color: string;
+  isFinal: boolean;
+}
+
+export const INVOICE_STATUSES: Record<InvoiceStatus, InvoiceStatusDefinition> = {
+  DRAFT: {
+    value: 'DRAFT',
+    label: 'Brouillon',
+    description: 'Facture en préparation, non encore transmise au client.',
+    badgeClass: 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700',
+    color: '#94A3B8',
+    isFinal: false,
+  },
+  SENT: {
+    value: 'SENT',
+    label: 'Envoyée',
+    description: 'Facture transmise au client, en attente de règlement.',
+    badgeClass: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-900',
+    color: '#2563EB',
+    isFinal: false,
+  },
+  PARTIALLY_PAID: {
+    value: 'PARTIALLY_PAID',
+    label: 'Partiellement payée',
+    description: 'Un ou plusieurs règlements ont été enregistrés, le solde reste dû.',
+    badgeClass: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-900',
+    color: '#F59E0B',
+    isFinal: false,
+  },
+  PAID: {
+    value: 'PAID',
+    label: 'Payée',
+    description: 'Facture intégralement réglée.',
+    badgeClass: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-900',
+    color: '#10B981',
+    isFinal: true,
+  },
+  OVERDUE: {
+    value: 'OVERDUE',
+    label: 'En retard',
+    description: 'Date d’échéance dépassée et solde non réglé.',
+    badgeClass: 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950 dark:text-rose-300 dark:border-rose-900',
+    color: '#F43F5E',
+    isFinal: false,
+  },
+  CANCELLED: {
+    value: 'CANCELLED',
+    label: 'Annulée',
+    description: 'Facture annulée (erreur, avoir, abandon).',
+    badgeClass: 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700',
+    color: '#CBD5E1',
+    isFinal: true,
+  },
+};
+
+export const INVOICE_STATUS_ORDER: InvoiceStatus[] = ['DRAFT', 'SENT', 'PARTIALLY_PAID', 'OVERDUE', 'PAID', 'CANCELLED'];
+
+/** Transitions manuelles autorisées pour une facture. */
+export const ALLOWED_INVOICE_TRANSITIONS: Record<InvoiceStatus, InvoiceStatus[]> = {
+  DRAFT: ['SENT', 'CANCELLED', 'PAID'],
+  SENT: ['PARTIALLY_PAID', 'PAID', 'OVERDUE', 'CANCELLED', 'DRAFT'],
+  PARTIALLY_PAID: ['PAID', 'OVERDUE', 'CANCELLED'],
+  OVERDUE: ['PAID', 'PARTIALLY_PAID', 'CANCELLED'],
+  PAID: ['PARTIALLY_PAID', 'SENT'],
+  CANCELLED: ['DRAFT'],
+};
+
+export function invoiceStatusLabel(status: InvoiceStatus | string | null | undefined): string {
+  if (!status) return '—';
+  return INVOICE_STATUSES[status as InvoiceStatus]?.label ?? String(status);
+}
+
+export function invoiceStatusBadgeClass(status: InvoiceStatus | string | null | undefined): string {
+  if (!status) return INVOICE_STATUSES.DRAFT.badgeClass;
+  return INVOICE_STATUSES[status as InvoiceStatus]?.badgeClass ?? INVOICE_STATUSES.DRAFT.badgeClass;
+}
+
+export const INVOICE_PAYMENT_METHOD_LABELS: Record<string, string> = {
+  BANK_TRANSFER: 'Virement bancaire',
+  MOBILE_MONEY: 'Mobile Money',
+  CASH: 'Espèces',
+  CARD: 'Carte bancaire',
+  CHEQUE: 'Chèque',
+  OTHER: 'Autre',
+};
