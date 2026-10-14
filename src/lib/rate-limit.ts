@@ -77,6 +77,7 @@ export const RateLimits = {
   publicQuotationView: { max: 60, window: 300 },
   quotationDecision: { max: 10, window: 900 },
   export: { max: 40, window: 300 },
+  search: { max: 120, window: 60 },
   upload: { max: 30, window: 600 },
   api: { max: env.rateLimit.maxRequests, window: env.rateLimit.windowSeconds },
 } as const;

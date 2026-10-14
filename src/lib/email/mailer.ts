@@ -11,6 +11,12 @@ import { env } from '@/lib/env';
  * avertissement est retourné à l'appelant.
  */
 
+export interface EmailAttachment {
+  filename: string;
+  content: Buffer;
+  contentType?: string;
+}
+
 export interface SendEmailInput {
   to: string;
   subject: string;
@@ -19,6 +25,8 @@ export interface SendEmailInput {
   text: string;
   metadata?: Record<string, unknown>;
   replyTo?: string;
+  /** Pièces jointes (PDF du devis, par exemple). */
+  attachments?: EmailAttachment[];
 }
 
 export interface SendEmailResult {
@@ -47,6 +55,11 @@ async function deliverViaSmtp(input: SendEmailInput): Promise<SendEmailResult> {
     html: input.html,
     text: input.text,
     replyTo: input.replyTo,
+    attachments: input.attachments?.map((attachment) => ({
+      filename: attachment.filename,
+      content: attachment.content,
+      contentType: attachment.contentType,
+    })),
   });
   return {
     delivered: true,
@@ -70,6 +83,10 @@ async function deliverViaResend(input: SendEmailInput): Promise<SendEmailResult>
       html: input.html,
       text: input.text,
       reply_to: input.replyTo,
+      attachments: input.attachments?.map((attachment) => ({
+        filename: attachment.filename,
+        content: attachment.content.toString('base64'),
+      })),
     }),
   });
   if (!response.ok) {
@@ -95,6 +112,11 @@ async function deliverViaPostmark(input: SendEmailInput): Promise<SendEmailResul
       HtmlBody: input.html,
       TextBody: input.text,
       MessageStream: 'outbound',
+      Attachments: input.attachments?.map((attachment) => ({
+        Name: attachment.filename,
+        Content: attachment.content.toString('base64'),
+        ContentType: attachment.contentType ?? 'application/octet-stream',
+      })),
     }),
   });
   if (!response.ok) {

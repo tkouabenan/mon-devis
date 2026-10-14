@@ -24,6 +24,13 @@
     --input: 214 32% 91%;
     --ring: 221 83% 53%;
     --radius: 0.75rem;
+    /* Barre latérale de l'espace de travail */
+    --sidebar: 0 0% 100%;
+    --sidebar-foreground: 222 47% 11%;
+    --sidebar-accent: 210 40% 96%;
+    --sidebar-border: 214 32% 91%;
+    --sidebar-primary: 221 83% 53%;
+    --sidebar-primary-foreground: 0 0% 100%;
   }
 
   .dark {
@@ -46,6 +53,12 @@
     --border: 217 33% 18%;
     --input: 217 33% 18%;
     --ring: 217 91% 60%;
+    --sidebar: 222 45% 8%;
+    --sidebar-foreground: 210 40% 96%;
+    --sidebar-accent: 217 33% 15%;
+    --sidebar-border: 217 33% 18%;
+    --sidebar-primary: 217 91% 60%;
+    --sidebar-primary-foreground: 222 47% 11%;
   }
 
   * {
