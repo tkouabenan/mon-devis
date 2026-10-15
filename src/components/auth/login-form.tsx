@@ -11,7 +11,7 @@ import { Checkbox, FormField, Input, Label, PasswordInput } from '@/components/u
 const DEMO_ACCOUNTS = [
   { label: 'Propriétaire — Bâtir & Conseil (plan Pro, XOF)', email: 'demo@mon-devis.app', password: 'Demo2026!' },
   { label: 'Membre — accès limité', email: 'commercial@mon-devis.app', password: 'Demo2026!' },
-  { label: 'Espace EUR — Studio Awa (plan Gratuit)', email: 'studio@mon-devis.app', password: 'Demo2026!' },
+  { label: 'Second espace EUR — Studio Créatif Abidjan (formule gratuite)', email: 'studio@mon-devis.app', password: 'Demo2026!' },
 ];
 
 export function LoginForm({ redirectTo }: { redirectTo?: string }) {
