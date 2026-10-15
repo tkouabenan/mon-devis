@@ -75,32 +75,60 @@ Application Next.js (App Router) + TypeScript + PostgreSQL. Interface **françai
 
 ### Mise en route
 
+Sur une machine fraîchement clonée, une seule commande suffit : elle installe les
+dépendances, crée le fichier `.env` avec des secrets aléatoires, démarre la base
+locale, applique le schéma puis charge le jeu de démonstration.
+
 ```bash
-# 1. Dépendances
-npm install
-
-# 2. Configuration (les valeurs par défaut fonctionnent en local)
-cp .env.example .env
-
-# 3. Base de données locale (démarre PostgreSQL sur le port 54329)
-npm run db:start
-
-# 4. Schéma + données de démonstration
-npm run db:migrate
-npm run db:seed
-
-# 5. Application
-npm run dev           # http://localhost:3000
+npm run setup     # tout préparer (idempotent : relançable sans risque)
+npm run dev       # puis démarrez l'application
 ```
 
-Comptes créés par le jeu de données de démonstration (à changer avant toute mise en ligne) :
+```bash
+npm run setup -- --reset     # base repartie de zéro
+npm run setup -- --no-seed   # sans le jeu de démonstration
+```
 
-| Compte | Rôle | Formule |
-| --- | --- | --- |
-| `demo@mon-devis.app` / `Demo2026!` | Propriétaire | Pro (activée directement en base) |
-| `admin@mon-devis.app` / `Admin2026!` | Administration plateforme | — |
+<details>
+<summary>Mise en route manuelle, étape par étape</summary>
 
-> Sans `npm run db:seed`, l'application fonctionne : créez simplement un compte depuis `/inscription`.
+```bash
+npm install              # 1. Dépendances
+cp .env.example .env     # 2. Configuration (générez AUTH_SECRET, voir plus bas)
+npm run db:start         # 3. Base locale PostgreSQL (port 54329)
+npm run db:migrate       # 4. Schéma
+npm run db:seed          # 5. Données de démonstration (relançable)
+npm run dev              # 6. Application — http://localhost:3000
+```
+
+</details>
+
+### Comptes de démonstration
+
+Ils sont créés par `npm run db:seed` (chargé par `npm run setup`) et **affichés
+directement sur la page de connexion** (`/connexion`) en développement : un clic
+sur un compte pré-remplit le formulaire.
+
+| Compte | Mot de passe | Rôle | Formule |
+| --- | --- | --- | --- |
+| `demo@mon-devis.app` | `Demo2026!` | Propriétaire — Bâtir & Conseil SARL | Pro |
+| `commercial@mon-devis.app` | `Demo2026!` | Membre de l'équipe (accès limité) | Pro |
+| `studio@mon-devis.app` | `Demo2026!` | Second espace — Studio Créatif Abidjan | Gratuite |
+| `admin@mon-devis.app` | `Admin2026!` | Administrateur plateforme (badge dans le menu du compte) | — |
+
+42 devis, 8 clients, 18 produits, factures et notifications accompagnent le
+compte propriétaire.
+
+> Ces comptes sont réservés au développement : `npm run db:seed` **refuse de
+> s'exécuter** quand `NODE_ENV=production` (sauf `-- --force` explicite) et le
+> panneau « Comptes de démonstration » n'apparaît pas en production.
+>
+> Le compte administrateur n'a **pas encore d'interface dédiée** (`/admin*`, voir
+> « Ce qui reste à faire ») : il donne accès aux gardes serveur `requirePlatformAdmin`
+> utilisées par les actions d'administration.
+>
+> Sans jeu de démonstration, l'application fonctionne : créez simplement un compte
+> depuis `/inscription` puis suivez l'onboarding.
 
 ---
 
@@ -126,6 +154,7 @@ Copiez `.env.example` vers `.env` et adaptez. **Rien n'est obligatoire en dével
 | `IP_HASH_SALT` | Sel de hachage des adresses IP dans les journaux (RGPD) |
 | `RATE_LIMIT_WINDOW_SECONDS`, `RATE_LIMIT_MAX_REQUESTS` | Fenêtre et quota de limitation de débit par IP |
 | `ALLOWED_DEV_ORIGINS` | Hôtes autorisés en développement (aperçus, tunnels) — ignoré en production |
+| `TEST_DATABASE_URL` | Base des tests d'intégration (défaut : `mon_devis_test` sur le port 54329). Jamais utilisée par l'application |
 
 ### Stockage des fichiers (production : obligatoire)
 
@@ -226,6 +255,7 @@ Placez l'application derrière un reverse proxy HTTPS (Nginx, Caddy) et définis
 
 | Commande | Rôle |
 | --- | --- |
+| `npm run setup` | Remise en route complète (`.env`, dépendances, base, migrations, démo) |
 | `npm run dev` | Serveur de développement (0.0.0.0:3000) |
 | `npm run build` / `npm run start:prod` | Build de production et démarrage |
 | `npm run typecheck` | Vérification TypeScript (aucune erreur tolérée) |
@@ -235,7 +265,7 @@ Placez l'application derrière un reverse proxy HTTPS (Nginx, Caddy) et définis
 | `npm run db:start` / `npm run db:stop` | Base PostgreSQL locale embarquée |
 | `npm run db:migrate` | Applique les migrations (`drizzle/`) |
 | `npm run db:migrate:prod` | Applique les migrations via Drizzle Kit (sans `tsx`, pour la CI) |
-| `npm run db:seed` | Données de démonstration |
+| `npm run db:seed` | Données de démonstration (relançable sans doublon) |
 | `npm run db:reset` | Réinitialise et reseede la base locale |
 | `npm run db:generate` | Génère une migration après modification du schéma |
 | `npm run db:studio` | Explorateur de base Drizzle |
@@ -246,8 +276,13 @@ Placez l'application derrière un reverse proxy HTTPS (Nginx, Caddy) et définis
 
 ```bash
 npm run verify              # typage + tests unitaires (23 tests)
-npm run test:integration    # 61 tests sur la base mon_devis_test
+npm run test:integration    # 63 tests sur la base mon_devis_test
 ```
+
+`npm run setup` applique automatiquement les migrations aux **deux** bases :
+`mon_devis` (développement) et `mon_devis_test` (tests d'intégration, voir
+`TEST_DATABASE_URL`). La base de test est vidée par les tests, elle ne contient
+jamais les données de démonstration.
 
 Les tests d'intégration vérifient notamment :
 
