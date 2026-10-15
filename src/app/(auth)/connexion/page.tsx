@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
+import { AlertCircle } from 'lucide-react';
 import { getSession } from '@/lib/auth/session';
+import { checkDatabaseAvailability } from '@/lib/db-health';
 import { LoginForm } from '@/components/auth/login-form';
 
 export const metadata: Metadata = {
@@ -14,7 +16,10 @@ export default async function LoginPage({
 }: {
   searchParams: Promise<{ redirectTo?: string; verified?: string; reset?: string }>;
 }) {
-  const session = await getSession();
+  // Vérifié avant la session : si la base est injoignable, la connexion doit
+  // l'annoncer clairement plutôt que d'échouer sans explication.
+  const database = await checkDatabaseAvailability();
+  const session = database.available ? await getSession() : null;
   const params = await searchParams;
 
   if (session) {
@@ -37,6 +42,27 @@ export default async function LoginPage({
           {notice}
         </div>
       ) : null}
+
+      {database.available ? null : (
+        <div
+          role="alert"
+          className="space-y-1.5 rounded-xl border border-destructive/30 bg-destructive/5 p-3.5 text-sm text-destructive"
+        >
+          <p className="flex items-center gap-2 font-semibold">
+            <AlertCircle className="size-4" aria-hidden />
+            Service momentanément indisponible
+          </p>
+          <p className="text-destructive/90">
+            La connexion aux comptes est impossible pour le moment : {database.reason}.
+          </p>
+          <p className="text-xs text-destructive/80">
+            {process.env.NODE_ENV === 'production'
+              ? 'Vérifiez la variable DATABASE_URL du déploiement, puis l’état détaillé sur /api/health.'
+              : 'Localement : npm run setup (ou npm run db:start), puis rechargez cette page. État détaillé : /api/health.'}
+          </p>
+        </div>
+      )}
+
       <LoginForm redirectTo={params.redirectTo} />
     </div>
   );

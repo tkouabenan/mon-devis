@@ -16,6 +16,7 @@ import { passwordResetEmail, verificationEmail as buildVerificationEmail } from 
 import { env } from '@/lib/env';
 import { slugify } from '@/lib/utils';
 import { currencyForCountry } from '@/lib/currency';
+import { databaseErrorMessage } from '@/lib/errors';
 
 /**
  * Actions serveur d'authentification.
@@ -61,8 +62,10 @@ export async function registerAction(_previous: ActionResult | undefined, formDa
   }
 
   const email = parsed.data.email.toLowerCase();
-  const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
-  if (existing) {
+
+  try {
+    const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
+    if (existing) {
     return {
       success: false,
       errors: { email: 'Un compte existe déjà avec cette adresse e-mail.' },
@@ -140,8 +143,14 @@ export async function registerAction(_previous: ActionResult | undefined, formDa
     metadata: { email: created.user.email },
   });
 
-  // Vérification d'e-mail : envoyée si un fournisseur est configuré.
-  await sendVerificationEmailIfNeeded(created.user.id, created.user.email, created.user.name).catch(() => undefined);
+    // Vérification d'e-mail : envoyée si un fournisseur est configuré.
+    await sendVerificationEmailIfNeeded(created.user.id, created.user.email, created.user.name).catch(() => undefined);
+  } catch (error) {
+    const message = databaseErrorMessage(error);
+    if (!message) throw error;
+    console.error('[auth] inscription impossible :', error);
+    return { success: false, message };
+  }
 
   redirect('/onboarding');
 }
@@ -165,28 +174,40 @@ export async function loginAction(_previous: ActionResult | undefined, formData:
   }
 
   const email = parsed.data.email.toLowerCase();
-  const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
 
-  // Message volontairement identique dans les deux cas (pas d'énumération de comptes).
-  const invalidMessage = 'Adresse e-mail ou mot de passe incorrect.';
-  if (!user) {
-    await recordAuditFromRequest({ action: 'auth.login_failed', entity: 'user', metadata: { email } });
-    return { success: false, message: invalidMessage };
+  // Le moindre accès à la base peut échouer (variable absente, migrations non
+  // appliquées, serveur arrêté) : on explique la cause au lieu de renvoyer une
+  // page d'erreur générique, ce qui rendait le tableau de bord « inaccessible »
+  // sans piste de diagnostic.
+  try {
+    const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
+
+    // Message volontairement identique dans les deux cas (pas d'énumération de comptes).
+    const invalidMessage = 'Adresse e-mail ou mot de passe incorrect.';
+    if (!user) {
+      await recordAuditFromRequest({ action: 'auth.login_failed', entity: 'user', metadata: { email } });
+      return { success: false, message: invalidMessage };
+    }
+
+    const passwordValid = await verifyPassword(parsed.data.password, user.passwordHash);
+    if (!passwordValid) {
+      await recordAuditFromRequest({ action: 'auth.login_failed', entity: 'user', entityId: user.id, actorUserId: user.id });
+      return { success: false, message: invalidMessage };
+    }
+
+    if (user.isSuspended) {
+      return { success: false, message: "Ce compte est suspendu. Contactez le support pour plus d'informations." };
+    }
+
+    await createSession(user.id, { remember: parsed.data.remember, userAgent, ip });
+    await touchLastLogin(user.id);
+    await recordAuditFromRequest({ action: 'auth.login', entity: 'user', entityId: user.id, actorUserId: user.id });
+  } catch (error) {
+    const message = databaseErrorMessage(error);
+    if (!message) throw error;
+    console.error('[auth] connexion impossible :', error);
+    return { success: false, message };
   }
-
-  const passwordValid = await verifyPassword(parsed.data.password, user.passwordHash);
-  if (!passwordValid) {
-    await recordAuditFromRequest({ action: 'auth.login_failed', entity: 'user', entityId: user.id, actorUserId: user.id });
-    return { success: false, message: invalidMessage };
-  }
-
-  if (user.isSuspended) {
-    return { success: false, message: "Ce compte est suspendu. Contactez le support pour plus d'informations." };
-  }
-
-  await createSession(user.id, { remember: parsed.data.remember, userAgent, ip });
-  await touchLastLogin(user.id);
-  await recordAuditFromRequest({ action: 'auth.login', entity: 'user', entityId: user.id, actorUserId: user.id });
 
   const redirectTo = parsed.data.redirectTo && parsed.data.redirectTo.startsWith('/') ? parsed.data.redirectTo : '/tableau-de-bord';
   redirect(redirectTo);

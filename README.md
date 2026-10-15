@@ -13,6 +13,7 @@ Application Next.js (App Router) + TypeScript + PostgreSQL. Interface **françai
 - [Stack technique](#stack-technique)
 - [Démarrage local](#démarrage-local)
 - [Variables d'environnement](#variables-denvironnement)
+- [En cas de problème d'accès](#en-cas-de-problème-daccès)
 - [Déploiement](#déploiement)
 - [Commandes utiles](#commandes-utiles)
 - [Tests](#tests)
@@ -183,6 +184,24 @@ Copiez `.env.example` vers `.env` et adaptez. **Rien n'est obligatoire en dével
 | `ORANGE_MONEY_*`, `MTN_MOMO_*`, `WAVE_API_KEY` | Mobile Money (préparation) |
 
 > Tant que `PAYMENT_PROVIDER=none`, l'application **ne simule aucun paiement** : la page Abonnement l'indique et enregistre une demande de changement de formule à traiter manuellement.
+
+---
+
+## En cas de problème d'accès
+
+L'application explique elle-même ce qui manque, plutôt que d'afficher une page d'erreur opaque :
+
+| Symptôme | Où regarder |
+| --- | --- |
+| « Service momentanément indisponible » sur `/connexion` | La bannière indique la cause exacte (hôte introuvable, identifiants refusés, `DATABASE_URL` absente…). Corrigez la variable puis rechargez. |
+| `error` sur `/api/health` | Sonde JSON : `database`, `auth`, `storage`, `email`, `payments`. Un `error` renvoie `503` et nomme la variable responsable. |
+| Connexion refusée alors que la base répond | Les comptes de démonstration n'existent que si `npm run db:seed` a été exécuté : vérifiez avec `npm run setup`. |
+| Tableau de bord qui redirige sans cesse vers `/connexion` | Base injoignable : l'application refuse la session (échec fermé) et l'annonce sur la page de connexion. |
+
+Sous le capot : si PostgreSQL ne répond pas, `getSession()` renvoie « aucune session »
+au lieu de faire échouer la page ; la connexion affiche la cause ; les erreurs
+restantes sont rendues par un écran d'erreur en français (`src/app/error.tsx`,
+`src/app/(app)/error.tsx`) proposant « Réessayer » et un lien vers l'état du service.
 
 ---
 

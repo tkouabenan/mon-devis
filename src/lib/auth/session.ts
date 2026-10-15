@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers';
 import { and, eq, gt, isNull } from 'drizzle-orm';
 import { db } from '@/db';
+import { describeDatabaseError } from '@/lib/errors';
 import { organizationMembers, organizations, sessions, users } from '@/db/schema';
 import { env } from '@/lib/env';
 import { generateToken, hashToken } from './password';
@@ -113,15 +114,25 @@ export async function getSession(): Promise<SessionContext | null> {
   const [sessionId, token] = raw.split('.');
   if (!sessionId || !token) return null;
 
-  const [row] = await db
-    .select({
-      session: { id: sessions.id, tokenHash: sessions.tokenHash, expiresAt: sessions.expiresAt, lastSeenAt: sessions.lastSeenAt, revokedAt: sessions.revokedAt },
-      user: users,
-    })
-    .from(sessions)
-    .innerJoin(users, eq(sessions.userId, users.id))
-    .where(and(eq(sessions.id, sessionId), isNull(sessions.revokedAt), gt(sessions.expiresAt, new Date())))
-    .limit(1);
+  // Si la base est injoignable, on refuse la session (échec fermé) : l'utilisateur
+  // est renvoyé vers la connexion, qui explique la panne, au lieu d'obtenir une
+  // page d'erreur. Les autres erreurs remontent normalement.
+  let row: { session: { id: string; tokenHash: string; expiresAt: Date; lastSeenAt: Date; revokedAt: Date | null }; user: typeof users.$inferSelect } | undefined;
+  try {
+    [row] = await db
+      .select({
+        session: { id: sessions.id, tokenHash: sessions.tokenHash, expiresAt: sessions.expiresAt, lastSeenAt: sessions.lastSeenAt, revokedAt: sessions.revokedAt },
+        user: users,
+      })
+      .from(sessions)
+      .innerJoin(users, eq(sessions.userId, users.id))
+      .where(and(eq(sessions.id, sessionId), isNull(sessions.revokedAt), gt(sessions.expiresAt, new Date())))
+      .limit(1);
+  } catch (error) {
+    if (!describeDatabaseError(error)) throw error;
+    console.error('[auth] session non vérifiable, base de données injoignable :', error);
+    return null;
+  }
 
   if (!row) return null;
   if (row.session.tokenHash !== hashToken(token)) return null;

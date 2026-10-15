@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { describeDatabaseError } from '@/lib/errors';
 import { sql } from 'drizzle-orm';
 import { db } from '@/db';
 import { env } from '@/lib/env';
@@ -35,7 +36,19 @@ async function checkDatabase(): Promise<CheckResult> {
     if (message.includes('does not exist') && message.includes('__drizzle_migrations')) {
       return { status: 'error', message: 'Base joignable mais aucune migration appliquée : exécutez `npm run db:migrate`.' };
     }
-    return { status: 'error', message: `Base de données injoignable : ${message}` };
+    if (message.includes('42P01')) {
+      return { status: 'error', message: "Base joignable mais tables absentes : exécutez `npm run db:migrate`." };
+    }
+    // Cause lisible (hôte introuvable, identifiants refusés, variable absente…)
+    // plutôt que le message brut du pilote, souvent tronqué au premier saut de ligne.
+    const reason = describeDatabaseError(error);
+    const help = env.isProduction
+      ? ' Vérifiez DATABASE_URL dans les variables du déploiement.'
+      : ' Démarrez la base locale : `npm run setup` ou `npm run db:start`.';
+    return {
+      status: 'error',
+      message: reason ? `Base de données injoignable : ${reason}.${help}` : `Base de données injoignable : ${message.split('\n')[0]}`,
+    };
   }
 }
 
