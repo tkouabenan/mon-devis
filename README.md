@@ -105,16 +105,16 @@ npm run dev              # 6. Application — http://localhost:3000
 
 ### Comptes de démonstration
 
-Ils sont créés par `npm run db:seed` (chargé par `npm run setup`) et **affichés
-directement sur la page de connexion** (`/connexion`) en développement : un clic
-sur un compte pré-remplit le formulaire.
+Ils sont créés par `npm run db:seed` (chargé par `npm run setup`). En
+développement, les trois premiers sont **affichés directement sur la page de
+connexion** (`/connexion`) : un clic pré-remplit le formulaire.
 
 | Compte | Mot de passe | Rôle | Formule |
 | --- | --- | --- | --- |
 | `demo@mon-devis.app` | `Demo2026!` | Propriétaire — Bâtir & Conseil SARL | Pro |
 | `commercial@mon-devis.app` | `Demo2026!` | Membre de l'équipe (accès limité) | Pro |
 | `studio@mon-devis.app` | `Demo2026!` | Second espace — Studio Créatif Abidjan | Gratuite |
-| `admin@mon-devis.app` | `Admin2026!` | Administrateur plateforme (badge dans le menu du compte) | — |
+| `admin@mon-devis.app` | `Admin2026!` | Administrateur plateforme — non affiché sur la page de connexion | — |
 
 42 devis, 8 clients, 18 produits, factures et notifications accompagnent le
 compte propriétaire.
