@@ -11,7 +11,7 @@
  */
 import 'dotenv/config';
 import { createHash } from 'node:crypto';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { db, getPool } from '@/db';
 import {
   applicationSettings,
@@ -372,12 +372,37 @@ async function seedUser(input: {
   password: string;
   isPlatformAdmin?: boolean;
   phone?: string;
-}): Promise<SeededUser> {
+}): Promise<SeededUser & { created: boolean }> {
+  const email = input.email.toLowerCase();
   const passwordHash = await hashPassword(input.password);
+
+  // Le seed doit pouvoir être relancé (et `npm run setup` aussi) sans échouer :
+  // si le compte existe déjà, on réinitialise ses accès plutôt que d'échouer sur
+  // la contrainte d'unicité de l'adresse e-mail.
+  const [existing] = await db.select({ id: users.id, email: users.email, name: users.name }).from(users).where(eq(users.email, email)).limit(1);
+
+  if (existing) {
+    await db
+      .update(users)
+      .set({
+        name: input.name,
+        phone: input.phone ?? null,
+        passwordHash,
+        emailVerifiedAt: new Date(),
+        isPlatformAdmin: input.isPlatformAdmin ?? false,
+        isSuspended: false,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, existing.id));
+
+    await db.insert(notificationPreferences).values({ userId: existing.id }).onConflictDoNothing();
+    return { ...existing, created: false };
+  }
+
   const [row] = await db
     .insert(users)
     .values({
-      email: input.email.toLowerCase(),
+      email,
       name: input.name,
       phone: input.phone ?? null,
       passwordHash,
@@ -389,13 +414,15 @@ async function seedUser(input: {
     .returning({ id: users.id, email: users.email, name: users.name });
 
   await db.insert(notificationPreferences).values({ userId: row.id }).onConflictDoNothing();
-  return row;
+  return { ...row, created: true };
 }
 
 interface SeededOrganization {
   id: string;
   name: string;
   subscriptionPlanCode: string;
+  /** false lorsque l'organisation existait déjà (seed relancé). */
+  created: boolean;
 }
 
 async function seedOrganization(input: {
@@ -413,6 +440,37 @@ async function seedOrganization(input: {
   customersSubset?: number;
   statusMix?: Partial<Record<QuotationStatus, number>>;
 }): Promise<SeededOrganization> {
+  // Idempotence : une organisation du même identifiant est réutilisée telle
+  // quelle (ses devis, clients et produits existants ne sont pas dupliqués).
+  const [existingOrganization] = await db
+    .select({ id: organizations.id })
+    .from(organizations)
+    .where(eq(organizations.slug, input.slug))
+    .limit(1);
+
+  if (existingOrganization) {
+    for (const member of input.members) {
+      await db
+        .insert(organizationMembers)
+        .values({ organizationId: existingOrganization.id, userId: member.userId, role: member.role })
+        .onConflictDoNothing();
+    }
+    const [subscription] = await db
+      .select({ planCode: subscriptionPlans.code })
+      .from(subscriptions)
+      .innerJoin(subscriptionPlans, eq(subscriptions.planId, subscriptionPlans.id))
+      .where(eq(subscriptions.organizationId, existingOrganization.id))
+      .limit(1);
+
+    console.log(`[seed] organisation « ${input.name} » déjà présente : conservée (aucun doublon créé)`);
+    return {
+      id: existingOrganization.id,
+      name: input.name,
+      subscriptionPlanCode: subscription?.planCode ?? input.planCode,
+      created: false,
+    };
+  }
+
   const [organization] = await db
     .insert(organizations)
     .values({ name: input.name, slug: input.slug, ownerId: input.ownerId })
@@ -715,7 +773,7 @@ async function seedOrganization(input: {
 
   console.log(`[seed] organisation « ${input.name} » : ${statuses.length} devis, ${customerRows.length} clients, ${productRows.length} produits`);
 
-  return { id: organization.id, name: input.name, subscriptionPlanCode: input.planCode };
+  return { id: organization.id, name: input.name, subscriptionPlanCode: input.planCode, created: true };
 }
 
 async function seedNotifications(userId: string, organizationId: string, quotationIds: string[]): Promise<void> {
@@ -859,7 +917,9 @@ async function main(): Promise<void> {
     statusMix: { ACCEPTED: 0.34, SENT: 0.33, DRAFT: 0.33 },
   });
 
-  // Notifications (utilisateur de démonstration)
+  // Notifications et journal d'audit : seulement lors de la création initiale,
+  // pour qu'un second passage n'empile pas des doublons.
+  if (mainOrg.created) {
   const recentQuotations = await db
     .select({ id: quotations.id })
     .from(quotations)
@@ -896,6 +956,9 @@ async function main(): Promise<void> {
     provider: 'console',
     bodyPreview: 'Aucun fournisseur d’e-mail configuré : message non envoyé (voir EMAIL_DRIVER).',
   });
+  } else {
+    console.log('[seed] données de démonstration déjà chargées : seuls les comptes ont été (ré)initialisés');
+  }
 
   const duration = ((Date.now() - startedAt) / 1000).toFixed(1);
   console.log(`\n[seed] jeu de démonstration prêt en ${duration}s.`);

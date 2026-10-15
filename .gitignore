@@ -41,9 +41,10 @@ yarn-error.log*
 *.db
 *.db-journal
 
-# uploaded assets (local storage driver)
+# runtime files (local storage driver, journaux de la base locale)
 /var/uploads/
 /var/exports/
+/var/*.log
 
 # typescript
 *.tsbuildinfo
