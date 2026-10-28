@@ -1,12 +1,13 @@
 /**
  * Plans d'abonnement et contrôle des accès (feature gating).
  *
- * Les plans sont stockés en base (`subscription_plans`) et modifiables depuis
- * l'administration : tarifs, limites et fonctionnalités. Les valeurs ci-dessous
- * constituent le jeu de données initial et le repli si la base est indisponible.
+ * Les plans sont stockés en base (`subscription_plans`) : tarifs, limites et
+ * fonctionnalités. Les valeurs ci-dessous constituent le jeu de données initial
+ * et le repli si la base est indisponible.
  *
- * Aucun prix « réel » n'est inventé : les tarifs par défaut sont à 0 et doivent
- * être configurés dans l'administration (Administration → Tarifs).
+ * Aucun prix « réel » n'est inventé : les tarifs par défaut sont à 0. Aucun écran
+ * d'administration des tarifs n'existe encore — ils se modifient directement dans
+ * la table `subscription_plans`.
  */
 
 export interface PlanLimits {

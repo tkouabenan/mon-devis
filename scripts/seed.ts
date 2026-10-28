@@ -295,7 +295,7 @@ async function seedPlans(): Promise<Map<string, string>> {
       .returning({ id: subscriptionPlans.id, code: subscriptionPlans.code });
     ids.set(row.code, row.id);
   }
-  console.log(`[seed] ${ids.size} plans d’abonnement configurés (tarifs à définir dans l’administration)`);
+  console.log(`[seed] ${ids.size} plans d’abonnement configurés (tarifs à 0 : à définir dans la table subscription_plans)`);
   return ids;
 }
 
@@ -963,7 +963,8 @@ async function main(): Promise<void> {
   const duration = ((Date.now() - startedAt) / 1000).toFixed(1);
   console.log(`\n[seed] jeu de démonstration prêt en ${duration}s.`);
   console.log('[seed] connectez-vous sur http://localhost:3000/connexion avec demo@mon-devis.app / Demo2026!');
-  console.log('[seed] les tarifs des plans sont volontairement à 0 : définissez-les dans Administration → Tarifs.\n');
+  console.log('[seed] les tarifs des plans sont volontairement à 0 : aucun écran d’administration des');
+  console.log('[seed] tarifs n’existe encore — modifiez la table subscription_plans en base.\n');
 
   await getPool().end();
 }

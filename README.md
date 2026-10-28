@@ -238,6 +238,48 @@ restantes sont rendues par un écran d'erreur en français (`src/app/error.tsx`,
 
 6. **Domaine** — ajoutez votre domaine puis mettez à jour `NEXT_PUBLIC_APP_URL` (utilisé par les liens de partage client) et redéployez.
 
+### Supabase (PostgreSQL hébergé)
+
+Le projet utilise PostgreSQL via Drizzle : Supabase sert simplement d'hébergeur,
+aucune adaptation de code n'est nécessaire. Récupérez la chaîne dans
+*Project Settings → Database → Connection string → URI*.
+
+| Usage | Chaîne à utiliser |
+| --- | --- |
+| Migrations (depuis votre machine ou une CI) | pooler de **session**, port `5432` : `postgresql://postgres.<ref>:<mot-de-passe>@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require` |
+| Application (variable Vercel) | pooler de **transactions**, port `6543`, utilisateur `postgres.<ref>-pooler` : `postgresql://postgres.<ref>-pooler:<mot-de-passe>@aws-0-<region>.pooler.supabase.com:6543/postgres?sslmode=require` |
+
+```bash
+# 1. Appliquer les 4 migrations du dossier drizzle/ sur la base Supabase
+DATABASE_URL="postgresql://postgres.<ref>:<mot-de-passe>@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require" \
+  npm run db:migrate:prod
+
+# 2. Vérifier depuis l'application déployée
+curl https://votre-domaine.vercel.app/api/health
+```
+
+Trois pièges rencontrés concrètement :
+
+- **Encodage du mot de passe.** Un caractère spécial doit être encodé (`@` → `%40`,
+  espace → `%20`, `#` → `%23`). Sans cela le pilote intègre les caractères suivants
+  dans le mot de passe : une URL de la forme `…postgres:motdepasse @db.…` est lue
+  avec le mot de passe `motdepasse @` et l'authentification échoue systématiquement.
+- **Port du pooler.** Le port `6543` (transactions) ne supporte pas les instructions
+  préparées : utilisez le port `5432` (session) pour les migrations.
+- **`--reset` est refusé sur une base distante.** `npm run db:reset` supprime tout le
+  schéma public ; le script refuse de le faire sur un hôte non local afin de protéger
+  la production et ses extensions.
+
+**Stockage des fichiers** : Supabase Storage est compatible S3, donc
+`STORAGE_DRIVER=s3` avec `S3_ENDPOINT=https://<ref>.supabase.co/storage/v1/s3`,
+`S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` issus des clés d'accès S3 du projet,
+et `S3_BUCKET` = le nom du bucket créé. Indispensable sur Vercel (système de
+fichiers éphémère).
+
+> ⚠️ Le mot de passe de la base et `AUTH_SECRET` ne vont **que** dans les variables
+> d'environnement de Vercel. `.env` est ignoré par git et `.env.example` est un
+> modèle publié : n'y mettez jamais de valeur réelle.
+
 #### Sans serveur d'aperçu qui écrase le build
 
 Pour vérifier un build en local **sans casser le serveur de développement en cours**, utilisez un répertoire de sortie séparé :
@@ -326,6 +368,7 @@ Les tests d'intégration vérifient notamment :
 - **Paiements** : aucune activation de formule sans règlement réel vérifié ; aucun webhook non signé n'est accepté le jour où un prestataire sera branché.
 - **Journaux d'audit** : actions sensibles tracées (créations, modifications, suppressions, exports, changements de formule, connexions).
 - **Données personnelles** : les adresses IP sont hachées avec `IP_HASH_SALT`, jamais stockées en clair.
+- **Secrets** : `.env` est ignoré par git (vérifiez avec `git check-ignore -v .env`) ; seul le modèle `.env.example` est publié, sans valeur réelle. Un secret committé — même supprimé au commit suivant — reste lisible dans l'historique d'un dépôt public : il faut le **faire tourner** (mot de passe de la base, `AUTH_SECRET`), pas seulement le retirer.
 
 ---
 

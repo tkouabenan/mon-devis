@@ -31,7 +31,10 @@ export function createPool(): Pool {
   }
   const pool = new Pool({
     connectionString: env.databaseUrl,
-    max: env.isProduction ? 10 : 5,
+    // En production l'application tourne en serverless : chaque instance ouvre
+    // son propre pool. Une valeur élevée sature vite le pooler de l'hébergeur
+    // (Supabase Supavisor, PgBouncer…) qui limite le nombre de clients par base.
+    max: env.isProduction ? 3 : 5,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
     allowExitOnIdle: !env.isProduction,
