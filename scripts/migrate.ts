@@ -28,6 +28,18 @@ async function main() {
   console.log(`[migrate] base ciblée : ${databaseUrl.replace(/:[^:@/]+@/, ':***@')}`);
 
   if (reset) {
+    // `--reset` supprime TOUT le schéma public (tables, données, extensions).
+    // Refusé sur une base distante : sur Supabase/Neon/RDS, cela détruirait la
+    // production et les extensions installées (pgcrypto, pg_stat_statements…).
+    const host = databaseUrl.replace(/^[a-z]+:\/\//, '').split('@').pop()?.split('/')[0]?.split(':')[0] ?? '';
+    const isLocal = ['localhost', '127.0.0.1', '::1'].includes(host);
+    if (!isLocal) {
+      console.error(`[migrate] --reset refusé : la base « ${host} » n'est pas locale.`);
+      console.error('[migrate] cette option supprime tout le schéma public. Pour réinitialiser une');
+      console.error('[migrate] base distante, passez par la console de votre hébergeur.');
+      await pool.end();
+      process.exit(1);
+    }
     console.log('[migrate] suppression du schéma public…');
     await db.execute(sql`DROP SCHEMA IF EXISTS public CASCADE`);
     await db.execute(sql`CREATE SCHEMA public`);
